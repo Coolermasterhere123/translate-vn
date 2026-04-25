@@ -59,7 +59,7 @@ export default function TranslateVN() {
   const arRef2 = useRef(false); arRef2.current = arActive;
   const facingRef = useRef(facing); facingRef.current = facing;
 
-  // ── Camera ─────────────────────────────────────────────────────────────────
+  // ── Camera setup
   const startCamera = useCallback(async () => {
     setNoCamera(false);
     try {
@@ -92,19 +92,17 @@ export default function TranslateVN() {
   const resumeCamera = useCallback(() => {
     const canvas = arRef.current as any;
     if (canvas) {
-      // Reset transform style and properties
       canvas.style.transform = '';
       canvas._scale = 1;
       canvas._panX = 0;
       canvas._panY = 0;
-      // Hide the AR overlay
       canvas.style.display = 'none';
     }
     snapshotRef.current = null;
     setArActive(false);
   }, []);
 
-  // ── AR Renderer ────────────────────────────────────────────────────────────
+  // ── AR rendering
   const renderAR = useCallback((items: TranslationItem[], errMsg: string | null) => {
     const snap = snapshotRef.current;
     const canvas = arRef.current;
@@ -123,6 +121,7 @@ export default function TranslateVN() {
     const offY = (vh - drawH) / 2;
     ctx.drawImage(snap, offX, offY, drawW, drawH);
 
+    // Draw each item
     items.forEach(item => {
       const bx = offX + (item.x / 100) * drawW;
       const by = offY + (item.y / 100) * drawH;
@@ -131,69 +130,49 @@ export default function TranslateVN() {
       const pad = Math.max(4, bh * 0.12);
 
       const sd = ctx.getImageData(Math.max(0, Math.round(bx)), Math.max(0, Math.round(by)), Math.max(1, Math.round(bw)), Math.max(1, Math.round(bh)));
-      let r = 0, g = 0, b = 0;
+      let r=0, g=0, b=0;
       const cnt = sd.data.length / 4;
-      for (let i = 0; i < sd.data.length; i += 4) {
-        r += sd.data[i];
-        g += sd.data[i + 1];
-        b += sd.data[i + 2];
+      for (let i=0; i<sd.data.length; i+=4) {
+        r+=sd.data[i]; g+=sd.data[i+1]; b+=sd.data[i+2];
       }
-      r = Math.round(r / cnt);
-      g = Math.round(g / cnt);
-      b = Math.round(b / cnt);
+      r = Math.round(r/cnt);
+      g = Math.round(g/cnt);
+      b = Math.round(b/cnt);
 
       ctx.save();
       ctx.fillStyle = `rgba(${r},${g},${b},0.94)`;
-      roundRect(ctx, bx - pad, by - pad, bw + pad * 2, bh + pad * 2, 6);
+      roundRect(ctx, bx - pad, by - pad, bw + pad*2, bh + pad*2, 6);
       ctx.fill();
       ctx.strokeStyle = 'rgba(200,146,42,0.7)';
       ctx.lineWidth = 1.5;
-      roundRect(ctx, bx - pad, by - pad, bw + pad * 2, bh + pad * 2, 6);
+      roundRect(ctx, bx - pad, by - pad, bw + pad*2, bh + pad*2, 6);
       ctx.stroke();
       ctx.restore();
 
-      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-      const textColor = luma > 145 ? '#111' : '#fff';
-      const availW = bw + pad * 2 - 8;
-      let fontSize = Math.max(10, bh * 0.72);
-      ctx.font = `700 ${fontSize}px "Be Vietnam Pro", sans-serif`;
-      while (fontSize > 8 && ctx.measureText(item.translation).width > availW) {
-        fontSize -= 0.5;
-        ctx.font = `700 ${fontSize}px "Be Vietnam Pro", sans-serif`;
-      }
-      ctx.save();
-      ctx.fillStyle = textColor;
-      ctx.textBaseline = 'middle';
+      // Draw the translation **above** the bounding box
+      ctx.font = `bold ${Math.max(10, bh * 0.72)}px "Be Vietnam Pro", sans-serif`;
+      ctx.fillStyle = (0.299*r + 0.587*g + 0.114*b) > 145 ? '#111' : '#fff';
+      ctx.textBaseline = 'bottom';
       ctx.textAlign = 'left';
-      ctx.fillText(item.translation, bx - pad + 5, by + bh / 2, availW);
-      ctx.restore();
-
-      if (item.context) {
-        ctx.save();
-        ctx.font = '600 9px "Be Vietnam Pro", sans-serif';
-        ctx.fillStyle = 'rgba(200,146,42,0.9)';
-        ctx.textBaseline = 'bottom';
-        ctx.textAlign = 'left';
-        ctx.fillText(item.context.toUpperCase(), bx - pad + 4, by - pad - 2);
-        ctx.restore();
-      }
+      ctx.fillText(item.translation, bx, by - 4); // position above box
     });
 
+    // Error or no items message
     if (errMsg || items.length === 0) {
       const msg = errMsg ?? 'No Vietnamese text found';
       ctx.save();
       ctx.fillStyle = 'rgba(0,0,0,0.65)';
-      roundRect(ctx, vw / 2 - 160, vh / 2 - 28, 320, 56, 14);
+      roundRect(ctx, vw/2-160, vh/2-28, 320, 56, 14);
       ctx.fill();
       ctx.strokeStyle = 'rgba(200,146,42,0.4)';
       ctx.lineWidth = 1;
-      roundRect(ctx, vw / 2 - 160, vh / 2 - 28, 320, 56, 14);
+      roundRect(ctx, vw/2-160, vh/2-28, 320, 56, 14);
       ctx.stroke();
       ctx.fillStyle = '#fff';
       ctx.font = '500 14px "Be Vietnam Pro", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(msg, vw / 2, vh / 2);
+      ctx.fillText(msg, vw/2, vh/2);
       ctx.restore();
     }
 
@@ -201,7 +180,7 @@ export default function TranslateVN() {
     setArActive(true);
   }, []);
 
-  // ── Translate API call
+  // ── translate API call
   const translate = useCallback(async (b64: string, scanMode: 'full' | 'quick') => {
     setScanning(true);
     try {
@@ -219,7 +198,7 @@ export default function TranslateVN() {
     setScanning(false);
   }, [renderAR]);
 
-  // Capture image for translation
+  // Capture image
   const capture = useCallback((scanMode: 'full' | 'quick') => {
     if (scanRef.current || !videoRef.current) return;
     if (flashRef.current) {
@@ -234,7 +213,7 @@ export default function TranslateVN() {
     translate(resizeToB64(snap, scanMode === 'quick' ? 800 : 1000, scanMode === 'quick' ? 0.6 : 0.75), scanMode);
   }, [translate]);
 
-  // Auto mode functions
+  // Auto scan
   const stopAuto = useCallback(() => {
     if (autoRef.current) { clearInterval(autoRef.current); autoRef.current = null; }
     const c = timerCircleRef.current;
@@ -264,7 +243,6 @@ export default function TranslateVN() {
     if (m === 'auto') startAuto(); else stopAuto();
   }, [startAuto, stopAuto, resumeCamera]);
 
-  // Gallery upload handler
   const handleGallery = useCallback((file?: File | null) => {
     if (!file) return;
     stopAuto();
@@ -283,7 +261,6 @@ export default function TranslateVN() {
     reader.readAsDataURL(file);
   }, [stopAuto, translate]);
 
-  // Shutter button handler
   const onShutter = useCallback(() => {
     if (arRef2.current) { resumeCamera(); return; }
     capture('full');
@@ -294,7 +271,6 @@ export default function TranslateVN() {
     const scale = el._scale || 1;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    // Clamp pan so image stays on screen
     const maxPanX = (vw * (scale - 1)) / 2;
     const maxPanY = (vh * (scale - 1)) / 2;
     el._panX = Math.min(maxPanX, Math.max(-maxPanX, el._panX || 0));
@@ -303,9 +279,10 @@ export default function TranslateVN() {
     el.style.transformOrigin = 'center center';
   };
 
-  // =================== JSX ===================
+  // =================== JSX Content ===================
   return (
     <div style={{ position:'fixed', inset:0, background:'#000' }}>
+      
       {/* Live video */}
       <video
         ref={videoRef}
@@ -353,14 +330,14 @@ export default function TranslateVN() {
             el._lastDist = dist;
             applyTransform(el);
           } else if (e.touches.length === 1 && !el._isPinch) {
-            // One finger pan
+            // Pan
             const moveX = e.touches[0].clientX - el._sx;
             const moveY = e.touches[0].clientY - el._sy;
             el._panX = (el._panX || 0) + moveX;
             el._panY = (el._panY || 0) + moveY;
             el._sx = e.touches[0].clientX;
             el._sy = e.touches[0].clientY;
-            applyTransform(el); // <-- Call to apply transform after pan update
+            applyTransform(el);
           }
         }}
         onTouchEnd={(e) => {
@@ -386,22 +363,9 @@ export default function TranslateVN() {
       {/* Flash overlay */}
       <div ref={flashRef} style={{ position:'absolute', inset:0, zIndex:25, background:'white', opacity:0, pointerEvents:'none', transition:'opacity .12s' }} />
 
-      {/* Viewfinder corners */}
-      {!arActive && (
-        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-58%)', width:'70vw', maxWidth:280, aspectRatio:'1', zIndex:8, pointerEvents:'none', opacity:0.65 }}>
-          {(['tl','tr','bl','br'] as const).map(pos => {
-            const map: Record<string, React.CSSProperties> = {
-              tl:{ top:0, left:0, borderWidth:'2px 0 0 2px', borderRadius:'3px 0 0 0' },
-              tr:{ top:0, right:0, borderWidth:'2px 2px 0 0', borderRadius:'0 3px 0 0' },
-              bl:{ bottom:0, left:0, borderWidth:'0 0 2px 2px', borderRadius:'0 0 0 3px' },
-              br:{ bottom:0, right:0, borderWidth:'0 2px 2px 0', borderRadius:'0 0 3px 0' },
-            };
-            return <div key={pos} style={{ position:'absolute', width:22, height:22, borderColor:'#e8b84b', borderStyle:'solid', ...map[pos] }} />;
-          })}
-        </div>
-      )}
-
-      {/* Top controls */}
+      {/* Viewfinder corners — removed overlay */}
+      
+      {/* Top control bar */}
       <div style={{ position:'absolute', top:0, left:0, right:0, zIndex:10, padding:'max(env(safe-area-inset-top),14px) 20px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', background:'linear-gradient(to bottom,rgba(0,0,0,0.75),transparent)' }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:34, height:34, borderRadius:10, background:'linear-gradient(135deg,#c8922a,#8b5e10)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, boxShadow:'0 2px 12px rgba(200,146,42,0.4)' }}>🇻🇳</div>
@@ -443,14 +407,9 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* Tap hint overlay */}
-      {!arActive && (
-        <div style={{ position:'absolute', bottom:115, left:'50%', transform:'translateX(-50%)', zIndex:10, background:'rgba(0,0,0,0.6)', backdropFilter:'blur(10px)', border:'1px solid rgba(200,146,42,0.22)', borderRadius:20, padding:'8px 18px', fontSize:12, color:'rgba(255,255,255,0.75)', whiteSpace:'nowrap', opacity:showHint ? 1 : 0, pointerEvents:'none', transition:'opacity 1s' }}>
-          📷 Tap anywhere or press the button to translate
-        </div>
-      )}
+      {/* Tap hint overlay - removed */}
 
-      {/* AR legend */}
+      {/* AR overlay legend */}
       {arActive && (
         <div style={{ position:'absolute', top:76, left:'50%', transform:'translateX(-50%)', zIndex:10, background:'rgba(0,0,0,0.65)', backdropFilter:'blur(10px)', border:'1px solid rgba(200,146,42,0.22)', borderRadius:20, padding:'6px 14px', fontSize:11, color:'rgba(255,255,255,0.6)', whiteSpace:'nowrap', display:'flex', alignItems:'center', gap:8 }}>
           <span style={{ color:'#e8b84b', fontWeight:700 }}>EN</span> overlaid · Tap image to dismiss
@@ -464,7 +423,7 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* Bottom controls */}
+      {/* Bottom control bar */}
       <div style={{ position:'absolute', bottom:0, left:0, right:0, zIndex:10, padding:'20px 28px max(env(safe-area-inset-bottom),24px)', display:'flex', alignItems:'center', justifyContent:'center', gap:28, background:'linear-gradient(to top,rgba(0,0,0,0.82),transparent)' }}>
         {/* Gallery upload */}
         <label style={{ width:48, height:48, borderRadius:'50%', border:'1px solid rgba(255,255,255,0.15)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)', flexShrink:0 }}>
@@ -472,7 +431,7 @@ export default function TranslateVN() {
           <input type="file" accept="image/*" style={{ display:'none' }} onChange={e => handleGallery(e.target.files?.[0])} />
         </label>
 
-        {/* Shutter button */}
+        {/* Shutter / capture button */}
         <div onClick={onShutter} style={{ width:72, height:72, borderRadius:'50%', border:`2px solid ${scanning?'#e8b84b': '#c8922a'}`, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', backdropFilter:'blur(8px)', boxShadow:scanning?'0 0 30px rgba(232,184,75,0.5)':'0 0 20px rgba(200,146,42,0.3)', transition:'box-shadow .2s,border-color .2s', flexShrink:0 }}>
           <span style={{ fontSize:24 }}>{arActive ? '✕' : scanning ? '⏳' : '📷'}</span>
         </div>
@@ -491,7 +450,7 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* No camera */}
+      {/* Camera permission/error message */}
       {noCamera && (
         <div style={{ position:'absolute', inset:0, zIndex:5, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, textAlign:'center', padding:40, background:'radial-gradient(ellipse at center,#111,#000)' }}>
           <div style={{ fontSize:52 }}>📷</div>
