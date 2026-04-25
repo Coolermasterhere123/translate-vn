@@ -269,7 +269,7 @@ export default function TranslateVN() {
   const gold = '#c8922a';
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'#000', overflow:'hidden' }}>
+    <div style={{ position:'fixed', inset:0, background:'#000'}}>
       {/* Live video */}
       <video
         ref={videoRef}
