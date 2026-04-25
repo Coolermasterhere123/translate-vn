@@ -201,7 +201,7 @@ export default function TranslateVN() {
     setArActive(true);
   }, []);
 
-  // ── Translate ──────────────────────────────────────────────────────────────
+  // ── Translate API call
   const translate = useCallback(async (b64: string, scanMode: 'full' | 'quick') => {
     setScanning(true);
     try {
@@ -219,7 +219,7 @@ export default function TranslateVN() {
     setScanning(false);
   }, [renderAR]);
 
-  // ── Capture ────────────────────────────────────────────────────────────────
+  // Capture image for translation
   const capture = useCallback((scanMode: 'full' | 'quick') => {
     if (scanRef.current || !videoRef.current) return;
     if (flashRef.current) {
@@ -234,7 +234,7 @@ export default function TranslateVN() {
     translate(resizeToB64(snap, scanMode === 'quick' ? 800 : 1000, scanMode === 'quick' ? 0.6 : 0.75), scanMode);
   }, [translate]);
 
-  // ── Auto mode ──────────────────────────────────────────────────────────────
+  // Auto mode functions
   const stopAuto = useCallback(() => {
     if (autoRef.current) { clearInterval(autoRef.current); autoRef.current = null; }
     const c = timerCircleRef.current;
@@ -264,7 +264,7 @@ export default function TranslateVN() {
     if (m === 'auto') startAuto(); else stopAuto();
   }, [startAuto, stopAuto, resumeCamera]);
 
-  // ── Gallery ────────────────────────────────────────────────────────────────
+  // Gallery upload handler
   const handleGallery = useCallback((file?: File | null) => {
     if (!file) return;
     stopAuto();
@@ -283,12 +283,13 @@ export default function TranslateVN() {
     reader.readAsDataURL(file);
   }, [stopAuto, translate]);
 
+  // Shutter button handler
   const onShutter = useCallback(() => {
     if (arRef2.current) { resumeCamera(); return; }
     capture('full');
   }, [capture, resumeCamera]);
 
-  // --- The applyTransform helper function --- (place it just before return)
+  // --- The fix: define applyTransform just before return ---
   const applyTransform = (el: any) => {
     const scale = el._scale || 1;
     const vw = window.innerWidth;
@@ -302,7 +303,7 @@ export default function TranslateVN() {
     el.style.transformOrigin = 'center center';
   };
 
-  // =================== JSX part =================== //
+  // =================== JSX ===================
   return (
     <div style={{ position:'fixed', inset:0, background:'#000' }}>
       {/* Live video */}
@@ -359,7 +360,7 @@ export default function TranslateVN() {
             el._panY = (el._panY || 0) + moveY;
             el._sx = e.touches[0].clientX;
             el._sy = e.touches[0].clientY;
-            applyTransform(el); // <-- ensure this is called
+            applyTransform(el); // <-- Call to apply transform after pan update
           }
         }}
         onTouchEnd={(e) => {
@@ -376,16 +377,16 @@ export default function TranslateVN() {
           }
           if (e.touches.length === 0) el._isPinch = false;
         }}
-        onClick={() => { 
+        onClick={(e) => {
           const el = e.currentTarget as any;
-          if (arActive && (el?._scale || 1) <= 1.05) resumeCamera(); 
+          if (arActive && (el?._scale || 1) <= 1.05) resumeCamera();
         }}
       />
 
       {/* Flash overlay */}
       <div ref={flashRef} style={{ position:'absolute', inset:0, zIndex:25, background:'white', opacity:0, pointerEvents:'none', transition:'opacity .12s' }} />
 
-      {/* Viewfinder corners — hide when AR active */}
+      {/* Viewfinder corners */}
       {!arActive && (
         <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-58%)', width:'70vw', maxWidth:280, aspectRatio:'1', zIndex:8, pointerEvents:'none', opacity:0.65 }}>
           {(['tl','tr','bl','br'] as const).map(pos => {
@@ -400,9 +401,8 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* Top control bar */}
+      {/* Top controls */}
       <div style={{ position:'absolute', top:0, left:0, right:0, zIndex:10, padding:'max(env(safe-area-inset-top),14px) 20px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', background:'linear-gradient(to bottom,rgba(0,0,0,0.75),transparent)' }}>
-        {/* Left side: icon and title */}
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:34, height:34, borderRadius:10, background:'linear-gradient(135deg,#c8922a,#8b5e10)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, boxShadow:'0 2px 12px rgba(200,146,42,0.4)' }}>🇻🇳</div>
           <div style={{ display:'flex', flexDirection:'column', lineHeight:1 }}>
@@ -425,14 +425,14 @@ export default function TranslateVN() {
         </div>
       </div>
 
-      {/* Auto scanning badge */}
+      {/* Auto badge */}
       {mode === 'auto' && (
         <div style={{ position:'absolute', top:78, left:'50%', transform:'translateX(-50%)', zIndex:10, background:'#c8922a', borderRadius:20, padding:'5px 14px', fontSize:10, fontWeight:700, color:'#000', letterSpacing:'0.1em', textTransform:'uppercase' }}>
           Auto Scanning
         </div>
       )}
 
-      {/* Timer ring for auto mode */}
+      {/* Timer ring */}
       {mode === 'auto' && !arActive && (
         <div style={{ position:'absolute', bottom:108, left:'50%', transform:'translateX(-50%)', zIndex:10 }}>
           <svg width="48" height="48" viewBox="0 0 64 64" style={{ transform:'rotate(-90deg)' }}>
@@ -450,7 +450,7 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* AR overlay legend */}
+      {/* AR legend */}
       {arActive && (
         <div style={{ position:'absolute', top:76, left:'50%', transform:'translateX(-50%)', zIndex:10, background:'rgba(0,0,0,0.65)', backdropFilter:'blur(10px)', border:'1px solid rgba(200,146,42,0.22)', borderRadius:20, padding:'6px 14px', fontSize:11, color:'rgba(255,255,255,0.6)', whiteSpace:'nowrap', display:'flex', alignItems:'center', gap:8 }}>
           <span style={{ color:'#e8b84b', fontWeight:700 }}>EN</span> overlaid · Tap image to dismiss
@@ -459,31 +459,31 @@ export default function TranslateVN() {
 
       {/* Dismiss hint */}
       {arActive && (
-        <div style={{ position:'absolute', bottom:115, left:'50%', transform:'translateX(-50%)', zIndex:10, background:'rgba(0,0,0,0.55)', backdropFilter:'blur(8px)', border:'1px solid rgba(200,146,42,0.22)', borderRadius:16, padding:'7px 16px', fontSize:11, color:'rgba(255,255,255,0.6)', whiteSpace:'nowrap' }}>
+        <div style={{ position:'absolute', bottom:115, left:'50%', transform:'translateX(-50%)', zIndex:10, background:'rgba(0,0,0,0.55)', backdropFilter:'blur(8px)', border:'1px solid rgba(200,146,42,0.22)', borderRadius:'16px', padding:'7px 16px', fontSize:11, color:'rgba(255,255,255,0.6)', whiteSpace:'nowrap' }}>
           Tap the image to return to camera
         </div>
       )}
 
-      {/* Bottom control bar */}
+      {/* Bottom controls */}
       <div style={{ position:'absolute', bottom:0, left:0, right:0, zIndex:10, padding:'20px 28px max(env(safe-area-inset-bottom),24px)', display:'flex', alignItems:'center', justifyContent:'center', gap:28, background:'linear-gradient(to top,rgba(0,0,0,0.82),transparent)' }}>
-        {/* Gallery upload button */}
+        {/* Gallery upload */}
         <label style={{ width:48, height:48, borderRadius:'50%', border:'1px solid rgba(255,255,255,0.15)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)', flexShrink:0 }}>
           🖼️
           <input type="file" accept="image/*" style={{ display:'none' }} onChange={e => handleGallery(e.target.files?.[0])} />
         </label>
 
-        {/* Shutter / capture button */}
+        {/* Shutter button */}
         <div onClick={onShutter} style={{ width:72, height:72, borderRadius:'50%', border:`2px solid ${scanning?'#e8b84b': '#c8922a'}`, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', backdropFilter:'blur(8px)', boxShadow:scanning?'0 0 30px rgba(232,184,75,0.5)':'0 0 20px rgba(200,146,42,0.3)', transition:'box-shadow .2s,border-color .2s', flexShrink:0 }}>
           <span style={{ fontSize:24 }}>{arActive ? '✕' : scanning ? '⏳' : '📷'}</span>
         </div>
 
-        {/* Camera flip button */}
+        {/* Flip camera */}
         <button onClick={flipCamera} style={{ width:48, height:48, borderRadius:'50%', border:'1px solid rgba(255,255,255,0.15)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)', flexShrink:0 }}>
           🔄
         </button>
       </div>
 
-      {/* Scanning indicator badge */}
+      {/* Scanning indicator */}
       {scanning && (
         <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:15, background:'rgba(0,0,0,0.75)', backdropFilter:'blur(14px)', border:'1px solid rgba(200,146,42,0.22)', borderRadius:20, padding:'14px 24px', display:'flex', alignItems:'center', gap:10, fontSize:13, fontWeight:500 }}>
           <span style={{ width:7, height:7, borderRadius:'50%', background:'#c8922a', display:'inline-block', animation:'pulse 1.1s ease infinite' }} />
@@ -491,7 +491,7 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* No camera access message */}
+      {/* No camera */}
       {noCamera && (
         <div style={{ position:'absolute', inset:0, zIndex:5, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, textAlign:'center', padding:40, background:'radial-gradient(ellipse at center,#111,#000)' }}>
           <div style={{ fontSize:52 }}>📷</div>
