@@ -278,12 +278,26 @@ export default function TranslateVN() {
         onClick={() => { if (mode==='tap' && !scanning && !arActive) capture('full'); }}
       />
 
-      {/* AR canvas */}
-      <canvas
-        ref={arRef}
-        style={{ position:'absolute', inset:0, width:'100%', height:'100%', zIndex:2, cursor:'pointer', display:'none' }}
-        onClick={() => { if (arActive) resumeCamera(); }}
-      />
+      {/* AR canvas — pinch to zoom, single tap to dismiss */}
+<canvas
+  ref={arRef}
+  style={{ position:'absolute', inset:0, width:'100%', height:'100%', zIndex:2, cursor:'pointer', display:'none', touchAction:'pinch-zoom' }}
+  onTouchStart={(e) => {
+    if (e.touches.length === 1) {
+      (e.currentTarget as any)._sx = e.touches[0].clientX;
+      (e.currentTarget as any)._sy = e.touches[0].clientY;
+    }
+  }}
+  onTouchEnd={(e) => {
+    if (arActive && e.changedTouches.length === 1 && e.touches.length === 0) {
+      const t = e.changedTouches[0];
+      const dx = Math.abs(t.clientX - ((e.currentTarget as any)._sx || 0));
+      const dy = Math.abs(t.clientY - ((e.currentTarget as any)._sy || 0));
+      if (dx < 12 && dy < 12) resumeCamera();
+    }
+  }}
+  onClick={() => { if (arActive) resumeCamera(); }}
+/>
 
       {/* Flash */}
       <div ref={flashRef} style={{ position:'absolute', inset:0, zIndex:25, background:'white', opacity:0, pointerEvents:'none', transition:'opacity .12s' }} />
