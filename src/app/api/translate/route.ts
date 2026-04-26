@@ -1,22 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Attempt to salvage truncated JSON by closing any open structures
 function repairJSON(raw: string): string {
   let s = raw.replace(/```json|```/g, '').trim();
-
-  // Find the last complete item by cutting at the last complete closing brace
   const lastGood = s.lastIndexOf('}');
-  if (lastGood !== -1) {
-    s = s.slice(0, lastGood + 1);
-  }
-
-  // Close any open array/object
-  const opens = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
+  if (lastGood !== -1) s = s.slice(0, lastGood + 1);
+  const opens  = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
   const braces = (s.match(/\{/g) || []).length - (s.match(/\}/g) || []).length;
-
   for (let i = 0; i < braces; i++) s += '}';
-  for (let i = 0; i < opens; i++) s += ']';
-
+  for (let i = 0; i < opens;  i++) s += ']';
   return s;
 }
 
@@ -38,23 +29,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'imageBase64 is required' }, { status: 400 });
   }
 
-  const prompt = `You are a Vietnamese OCR and translation engine for restaurant menus.
+  const prompt = `You are an expert Vietnamese OCR and translation engine specializing in restaurant menus, street signs, product labels, and all printed Vietnamese text.
 
-Find Vietnamese text in this image and return JSON.
+TASK: Carefully examine this image and find EVERY piece of Vietnamese text — including menu item names, prices, descriptions, headings, labels, signs, and any other text.
 
-Rules:
-- Each menu item = one entry
-- Include price in the translation e.g. "Beef Noodle Soup $18.00"
-- Bounding box should be tight around the text only
-- x,y,w,h are percentages of image dimensions (0-100)
-- Keep translations SHORT (under 60 characters)
+Vietnamese text uses diacritical marks (like ắ, ổ, ề, ươ, đ, etc). Look carefully for these characters.
 
-${mode === 'quick' ? 'Return max 5 items.' : 'Return all items you can see.'}
+For EACH text region found, return:
+- "original": exact Vietnamese text as it appears
+- "translation": accurate English translation, include price if visible e.g. "Beef Noodle Soup $18.00"
+- "context": type of text (e.g. "menu item", "section heading", "sign", "label")
+- "x": left edge of bounding box as % of image WIDTH (0-100)
+- "y": top edge of bounding box as % of image HEIGHT (0-100)
+- "w": width of bounding box as % of image WIDTH (1-100)
+- "h": height of bounding box as % of image HEIGHT (1-100)
 
-Return ONLY this JSON format with no extra text:
-{"items":[{"original":"Phở bò","translation":"Beef Noodle Soup $18","context":"menu item","x":5,"y":20,"w":45,"h":4}]}
+IMPORTANT:
+- Return EVERY text item separately
+- Bounding boxes must be TIGHT — only as wide as the actual text
+- If you see a menu, return EACH dish as a separate entry
+- Keep translations under 60 characters
+- Do NOT skip any text
 
-If no Vietnamese text: {"items":[]}`;
+${mode === 'quick' ? 'Return only the 5 most prominent items.' : 'Return ALL items. Be thorough.'}
+
+If no Vietnamese text exists return {"items":[]}.
+
+Respond ONLY with valid JSON, no markdown, no explanation:
+{"items":[{"original":"Phở bò","translation":"Beef Noodle Soup $18","context":"menu item","x":5,"y":20,"w":45,"h":4}]}`;
 
   try {
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -84,29 +86,37 @@ If no Vietnamese text: {"items":[]}`;
     const data = await groqRes.json();
 
     if (data.error) {
+      console.error('Groq API error:', data.error);
       return NextResponse.json({ error: data.error.message }, { status: 502 });
     }
 
     const raw = data.choices?.[0]?.message?.content ?? '';
+    console.log('Groq raw response (first 500 chars):', raw.slice(0, 500));
 
-    // Try parsing as-is first, then attempt repair
-    let parsed: { items: unknown[] };
+    // Try parse as-is
     try {
       const clean = raw.replace(/```json|```/g, '').trim();
-      parsed = JSON.parse(clean);
-    } catch {
+      const parsed = JSON.parse(clean);
+      console.log('Parsed successfully, items:', parsed?.items?.length ?? 0);
+      return NextResponse.json(parsed);
+    } catch (e1) {
+      console.warn('Initial parse failed, attempting repair. Error:', e1);
+      // Attempt repair
       try {
         const repaired = repairJSON(raw);
-        parsed = JSON.parse(repaired);
-      } catch {
-        // Last resort: return empty items rather than crashing
-        parsed = { items: [] };
+        console.log('Repaired JSON (first 300):', repaired.slice(0, 300));
+        const parsed = JSON.parse(repaired);
+        console.log('Repaired parse OK, items:', parsed?.items?.length ?? 0);
+        return NextResponse.json(parsed);
+      } catch (e2) {
+        console.error('Repair also failed:', e2);
+        console.error('Full raw response:', raw);
+        return NextResponse.json({ items: [], error: 'Could not parse model response' });
       }
     }
-
-    return NextResponse.json(parsed);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('Fetch error:', message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
