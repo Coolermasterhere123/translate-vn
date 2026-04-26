@@ -21,77 +21,68 @@ function resizeToB64(src: HTMLCanvasElement, maxW: number, quality: number): str
   return tmp.toDataURL('image/jpeg', quality).split(',')[1];
 }
 
-// Fit multi-line text INSIDE a box (wrap + shrink-to-fit)
+// Draw translation text — max 2 lines, small font, price inline at end
 function drawFittedText(
   ctx: CanvasRenderingContext2D,
   text: string,
   x: number, y: number, w: number, h: number
 ) {
-  const padding = Math.max(3, h * 0.1);
-  const maxW = w - padding * 2;
-  const maxH = h - padding * 2;
+  const pad = Math.max(3, h * 0.08);
+  const availW = w - pad * 2;
 
-  // Detect price
-  const priceMatch = text.match(/([$₫€£]\s?\d+[.,]?\d*|\d+[.,]\d+\s*[$₫€£]?)/);
-  let mainText = text;
-  let price = '';
-  if (priceMatch) {
-    price = priceMatch[0];
-    mainText = text.replace(price, '').trim();
-  }
+  // Start small — menu items should be compact
+  let fontSize = Math.min(11, Math.max(8, h * 0.38));
+  const MAX_LINES = 2;
 
-  let fontSize = Math.max(10, Math.min(18, h * 0.45));
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-
-  const wrapLines = (fs: number) => {
+  const getLines = (fs: number): string[] => {
     ctx.font = `600 ${fs}px "Be Vietnam Pro", system-ui, sans-serif`;
-    const words = mainText.split(/\s+/);
+    const words = text.split(/\s+/);
     const lines: string[] = [];
     let line = '';
     for (const word of words) {
       const test = line ? line + ' ' + word : word;
-      if (ctx.measureText(test).width <= maxW) {
+      if (ctx.measureText(test).width <= availW) {
         line = test;
       } else {
         if (line) lines.push(line);
         line = word;
+        if (lines.length >= MAX_LINES - 1) {
+          // Last allowed line — truncate with ellipsis
+          while (ctx.measureText(line + '…').width > availW && line.length > 1) {
+            line = line.slice(0, -1);
+          }
+          lines.push(line + '…');
+          return lines;
+        }
       }
     }
-    if (line) lines.push(line);
+    if (line && lines.length < MAX_LINES) lines.push(line);
     return lines;
   };
 
-  let lines = wrapLines(fontSize);
-
-  // Shrink until it fits
-  while (fontSize > 8) {
-    lines = wrapLines(fontSize);
-    const lineHeight = fontSize * 1.15;
-    const totalH = lines.length * lineHeight + (price ? lineHeight : 0);
-    const tooTall = totalH > maxH;
-    const tooWide = lines.some(l => ctx.measureText(l).width > maxW);
-    if (!tooTall && !tooWide) break;
-    fontSize -= 1;
+  // Shrink font until all lines fit within height
+  let lines = getLines(fontSize);
+  while (fontSize > 7) {
+    lines = getLines(fontSize);
+    const totalH = lines.length * fontSize * 1.2;
+    if (totalH <= h - pad * 2) break;
+    fontSize -= 0.5;
   }
 
-  const lineHeight = fontSize * 1.15;
-  let cy = y + padding;
+  const lineH = fontSize * 1.2;
+  const totalTextH = lines.length * lineH;
+  // Vertically center text
+  let cy = y + (h - totalTextH) / 2;
 
-  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#ffffff';
   ctx.font = `600 ${fontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
 
   lines.forEach(line => {
-    ctx.fillText(line, x + w / 2, cy);
-    cy += lineHeight;
+    ctx.fillText(line, x + pad, cy, availW);
+    cy += lineH;
   });
-
-  if (price) {
-    ctx.font = `bold ${fontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
-    ctx.fillStyle = '#ffd54f';
-    ctx.fillText(price, x + w / 2, y + h - lineHeight - padding);
-  }
 }
 
 export default function TranslateVN() {
@@ -191,33 +182,42 @@ export default function TranslateVN() {
     ctx.drawImage(snap, offX, offY, drawW, drawH);
 
     items.forEach(item => {
-      const text = (item.translation || '').trim();
-      if (!text) return;
+      const full = (item.translation || '').trim();
+      if (!full) return;
 
-      const bx  = offX + (item.x / 100) * drawW;
-      const by  = offY + (item.y / 100) * drawH;
-      const bw  = (item.w / 100) * drawW;
-      const bh  = (item.h / 100) * drawH;
+      const bx = offX + (item.x / 100) * drawW;
+      const by = offY + (item.y / 100) * drawH;
+      const bw = (item.w / 100) * drawW;
+      const bh = (item.h / 100) * drawH;
 
-      // Dark background over original text
-      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      // Split price from text so they sit side by side
+      const priceMatch = full.match(/(\$[\d,.]+|[\d,.]+\s*[$₫€£])/);
+      const price    = priceMatch ? priceMatch[0] : '';
+      const mainText = price ? full.replace(price, '').trim() : full;
+
+      // Measure price width to reserve space on the right
+      const priceFontSize = Math.min(11, Math.max(8, bh * 0.38));
+      ctx.font = `700 ${priceFontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
+      const priceW = price ? ctx.measureText(price).width + 8 : 0;
+
+      // Dark background — only as wide as the text box from the model
+      ctx.fillStyle = 'rgba(0,0,0,0.78)';
       ctx.fillRect(bx, by, bw, bh);
 
-      // Gold border
-      ctx.strokeStyle = 'rgba(200,146,42,0.8)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(bx, by, bw, bh);
+      // Gold left border strip
+      ctx.fillStyle = '#c8922a';
+      ctx.fillRect(bx, by, 2, bh);
 
-      // Fitted translated text
-      drawFittedText(ctx, text, bx, by, bw, bh);
+      // Draw main translation text (leaving room for price on right)
+      drawFittedText(ctx, mainText, bx + 2, by, bw - priceW - 4, bh);
 
-      // Context label above box
-      if (item.context) {
-        ctx.font = '600 9px "Be Vietnam Pro", system-ui, sans-serif';
-        ctx.fillStyle = 'rgba(200,146,42,0.9)';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(item.context.toUpperCase(), bx + 3, by - 2);
+      // Draw price flush right in gold
+      if (price) {
+        ctx.font = `700 ${priceFontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
+        ctx.fillStyle = '#ffd54f';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(price, bx + bw - 4, by + bh / 2);
       }
     });
 
