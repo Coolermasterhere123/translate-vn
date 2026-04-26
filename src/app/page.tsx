@@ -12,7 +12,6 @@ interface TranslationItem {
   h: number;
 }
 
-// ✅ Strongly typed canvas (fixes unsafe mutations)
 interface ARCanvas extends HTMLCanvasElement {
   _scale?: number;
   _panX?: number;
@@ -59,29 +58,29 @@ export default function TranslateVN() {
   const snapshotRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const autoRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const timerCircleRef = useRef<SVGCircleElement | null>(null);
   const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [mode, setModeState] = useState<'tap' | 'auto'>('tap');
+  const [mode, setMode] = useState<'tap' | 'auto'>('tap');
   const [scanning, setScanning] = useState(false);
   const [arActive, setArActive] = useState(false);
   const [noCamera, setNoCamera] = useState(false);
-  const [facing, setFacing] = useState<'environment' | 'user'>('environment');
 
   const scanRef = useRef(false); scanRef.current = scanning;
   const arRef2 = useRef(false); arRef2.current = arActive;
-  const facingRef = useRef(facing); facingRef.current = facing;
 
   // ── Camera
   const startCamera = useCallback(async () => {
     setNoCamera(false);
     try {
       streamRef.current?.getTracks().forEach(t => t.stop());
+
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facingRef.current },
+        video: { facingMode: 'environment' },
         audio: false,
       });
+
       streamRef.current = s;
+
       if (videoRef.current) {
         videoRef.current.srcObject = s;
         await videoRef.current.play();
@@ -113,7 +112,6 @@ export default function TranslateVN() {
     el._panY = Math.min(maxPanY, Math.max(-maxPanY, el._panY || 0));
 
     el.style.transform = `translate(${el._panX}px, ${el._panY}px) scale(${scale})`;
-    el.style.transformOrigin = 'center center';
   };
 
   // ── AR render
@@ -157,16 +155,41 @@ export default function TranslateVN() {
       ctx.fillRect(bx, by, bw, bh);
 
       ctx.fillStyle = '#fff';
-      ctx.fillText(item.translation, bx, by - 4);
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText(item.translation, bx + bw / 2, by - 4);
     });
 
     canvas.style.display = 'block';
     setArActive(true);
   }, []);
 
-  // ── Capture
+  // ── TRANSLATE (RESTORED)
+  const translate = useCallback(async (b64: string) => {
+    setScanning(true);
+
+    try {
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: b64 }),
+      });
+
+      const data = await res.json();
+
+      if (data.error) throw new Error(data.error);
+
+      renderAR(data.items ?? []);
+    } catch (err) {
+      console.error(err);
+      renderAR([]);
+    }
+
+    setScanning(false);
+  }, [renderAR]);
+
+  // ── Capture (FIXED)
   const capture = useCallback(() => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || scanRef.current) return;
 
     if (flashRef.current) {
       flashRef.current.style.opacity = '0.7';
@@ -178,17 +201,19 @@ export default function TranslateVN() {
     }
 
     const snap = document.createElement('canvas');
-    snap.width = videoRef.current.videoWidth;
-    snap.height = videoRef.current.videoHeight;
+    snap.width = videoRef.current.videoWidth || 1280;
+    snap.height = videoRef.current.videoHeight || 720;
 
     snap.getContext('2d')!.drawImage(videoRef.current, 0, 0);
+
     snapshotRef.current = snap;
 
-    // fake data call
-    renderAR([]);
-  }, [renderAR]);
+    const b64 = resizeToB64(snap, 1000, 0.75);
+    translate(b64);
 
-  // ── Auto
+  }, [translate]);
+
+  // ── Auto mode
   const runAuto = useCallback(() => {
     if (scanRef.current || arRef2.current) return;
     capture();
@@ -207,85 +232,39 @@ export default function TranslateVN() {
     }
   }, []);
 
-  // ── Touch handlers
-  const touchHandlers = {
-    onTouchStart: (e: React.TouchEvent) => {
-      const el = e.currentTarget as ARCanvas;
-
-      if (e.touches.length === 1) {
-        const t = e.touches[0];
-        el._sx = el._startX = t.clientX;
-        el._sy = el._startY = t.clientY;
-      }
-
-      if (e.touches.length === 2) {
-        el._isPinch = true;
-        const dx = e.touches[0].clientX - e.touches[1].clientX;
-        const dy = e.touches[0].clientY - e.touches[1].clientY;
-        el._lastDist = Math.hypot(dx, dy);
-        el._scale = el._scale || 1;
-      }
-    },
-
-    onTouchMove: (e: React.TouchEvent) => {
-      e.preventDefault();
-      const el = e.currentTarget as ARCanvas;
-
-      if (e.touches.length === 2) {
-        const dx = e.touches[0].clientX - e.touches[1].clientX;
-        const dy = e.touches[0].clientY - e.touches[1].clientY;
-        const dist = Math.hypot(dx, dy);
-
-        el._scale = Math.min(8, Math.max(1, (el._scale || 1) * (dist / (el._lastDist || dist))));
-        el._lastDist = dist;
-
-        applyTransform(el);
-      }
-    },
-
-    onTouchEnd: (e: React.TouchEvent) => {
-      const el = e.currentTarget as ARCanvas;
-
-      if (e.changedTouches.length === 1) {
-        const t = e.changedTouches[0];
-        const dx = Math.abs(t.clientX - (el._startX || 0));
-        const dy = Math.abs(t.clientY - (el._startY || 0));
-
-        if (dx < 12 && dy < 12) {
-          el._scale = 1;
-          el._panX = 0;
-          el._panY = 0;
-          applyTransform(el);
-          setArActive(false);
-        }
-      }
-    }
-  };
-
+  // ── UI
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
 
-      <video ref={videoRef} autoPlay playsInline muted
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
       />
 
       <canvas
         ref={arRef}
-        {...touchHandlers}
-        style={{ position: 'absolute', inset: 0, display: 'none', touchAction: 'none' }}
+        style={{ position: 'absolute', inset: 0, display: 'none' }}
       />
 
-      <div ref={flashRef}
+      <div
+        ref={flashRef}
         style={{ position: 'absolute', inset: 0, background: '#fff', opacity: 0 }}
       />
 
-      <button onClick={capture}
-        style={{ position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)' }}>
+      <button
+        onClick={capture}
+        style={{ position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)' }}
+      >
         📷
       </button>
 
-      <button onClick={() => mode === 'auto' ? stopAuto() : startAuto()}
-        style={{ position: 'absolute', top: 40, left: 20 }}>
+      <button
+        onClick={() => mode === 'auto' ? stopAuto() : startAuto()}
+        style={{ position: 'absolute', top: 40, left: 20 }}
+      >
         {mode === 'auto' ? 'Stop Auto' : 'Auto'}
       </button>
 
