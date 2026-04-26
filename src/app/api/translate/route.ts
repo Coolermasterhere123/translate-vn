@@ -35,9 +35,11 @@ For EACH text region found, return:
 
 IMPORTANT:
 - Return EVERY text item separately — each menu item on its own line gets its own entry
-- Bounding boxes must match exactly where the text appears in the image
+- Bounding boxes must be TIGHT around just the text — do NOT make boxes span the full page width
+- The box width (w) should only cover the actual text characters, not the whole line
+- Keep box heights small — just tall enough to contain the text line
 - If you see a menu, return EACH dish/item as a separate entry
-- Include prices as separate entries
+- Include the price IN the translation field together with the dish name e.g. "Beef Noodle Soup $18.00"
 - Do NOT skip any text
 
 ${mode === 'quick' ? 'Return only the 5 most prominent text items.' : 'Return ALL text items you can find. Be thorough.'}
