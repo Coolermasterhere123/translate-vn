@@ -27,25 +27,36 @@ function drawFittedText(
   text: string,
   x: number, y: number, w: number, h: number
 ) {
-  const padding = Math.max(4, Math.min(10, h * 0.12));
+  const padding = Math.max(3, h * 0.1);
   const maxW = w - padding * 2;
   const maxH = h - padding * 2;
 
-  // start big, shrink until it fits
-  let fontSize = Math.min(28, Math.max(12, h * 0.6));
+  // 🔍 Detect price (keeps it visible)
+  const priceMatch = text.match(/([$₫€£]\s?\d+[.,]?\d*)/);
+  let mainText = text;
+  let price = '';
+
+  if (priceMatch) {
+    price = priceMatch[0];
+    mainText = text.replace(price, '').trim();
+  }
+
+  // Start SMALLER than before (menu friendly)
+  let fontSize = Math.max(10, Math.min(18, h * 0.45));
+
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
 
-  const makeLines = (fs: number) => {
-    ctx.font = `bold ${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
-    const words = text.split(/\s+/);
+  const wrapLines = (fs: number) => {
+    ctx.font = `600 ${fs}px system-ui, sans-serif`;
+
+    const words = mainText.split(/\s+/);
     const lines: string[] = [];
     let line = '';
 
     for (const word of words) {
       const test = line ? line + ' ' + word : word;
-      const m = ctx.measureText(test);
-      if (m.width <= maxW) {
+      if (ctx.measureText(test).width <= maxW) {
         line = test;
       } else {
         if (line) lines.push(line);
@@ -53,36 +64,46 @@ function drawFittedText(
       }
     }
     if (line) lines.push(line);
+
     return lines;
   };
 
-  let lines = makeLines(fontSize);
+  let lines = wrapLines(fontSize);
 
-  // shrink loop
-  while (fontSize > 10) {
-    lines = makeLines(fontSize);
+  // 🔻 Shrink until it fits perfectly
+  while (fontSize > 8) {
+    lines = wrapLines(fontSize);
+
     const lineHeight = fontSize * 1.15;
-    const totalH = lines.length * lineHeight;
+    const totalH = lines.length * lineHeight + (price ? lineHeight : 0);
+
     const tooTall = totalH > maxH;
     const tooWide = lines.some(l => ctx.measureText(l).width > maxW);
+
     if (!tooTall && !tooWide) break;
+
     fontSize -= 1;
   }
 
-  // draw centered vertically
   const lineHeight = fontSize * 1.15;
-  const totalH = lines.length * lineHeight;
-  let cy = y + (h - totalH) / 2;
+  let cy = y + padding;
 
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+  ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
 
-  for (const line of lines) {
+  // 🧾 Draw main text
+  lines.forEach(line => {
     ctx.fillText(line, x + w / 2, cy);
     cy += lineHeight;
+  });
+
+  // 💰 Draw price LAST (always visible)
+  if (price) {
+    ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
+    ctx.fillStyle = '#ffd54f'; // subtle highlight
+    ctx.fillText(price, x + w / 2, y + h - lineHeight);
   }
 }
-
 export default function TranslateVN() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
