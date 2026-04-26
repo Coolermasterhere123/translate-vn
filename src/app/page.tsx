@@ -161,16 +161,21 @@ export default function TranslateVN() {
       const bw = (item.w / 100) * drawW;
       const bh = (item.h / 100) * drawH;
 
-      // Dark semi-transparent background — tight to the text
-      ctx.fillStyle = 'rgba(0,0,0,0.82)';
-      ctx.fillRect(bx, by, bw, bh);
+      // Shrink box height to ~40% of what model returns — just enough for one text line
+      const textH = Math.min(bh, Math.max(14, bh * 0.45));
+      // Center the shrunken box vertically within the model's bounding box
+      const textY = by + (bh - textH) / 2;
+
+      // Dark background — tight around text only
+      ctx.fillStyle = 'rgba(0,0,0,0.85)';
+      ctx.fillRect(bx, textY, bw, textH);
 
       // Gold left border strip
       ctx.fillStyle = '#c8922a';
-      ctx.fillRect(bx, by, 2, bh);
+      ctx.fillRect(bx, textY, 2, textH);
 
-      // Draw translation text — single line, auto-shrink
-      drawFittedText(ctx, full, bx + 2, by, bw - 2, bh);
+      // Draw translation text inside the shrunken box
+      drawFittedText(ctx, full, bx + 2, textY, bw - 2, textH);
     });
 
     if (errMsg || items.length === 0) {
