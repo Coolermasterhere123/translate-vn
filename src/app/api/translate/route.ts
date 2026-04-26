@@ -1,14 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-function repairJSON(raw: string): string {
+// Extract JSON from messy model output
+function extractJSON(raw: string): { items: unknown[] } {
+  // Strip markdown fences
   let s = raw.replace(/```json|```/g, '').trim();
-  const lastGood = s.lastIndexOf('}');
-  if (lastGood !== -1) s = s.slice(0, lastGood + 1);
-  const opens  = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
-  const braces = (s.match(/\{/g) || []).length - (s.match(/\}/g) || []).length;
-  for (let i = 0; i < braces; i++) s += '}';
-  for (let i = 0; i < opens;  i++) s += ']';
-  return s;
+
+  // Try direct parse first
+  try {
+    return JSON.parse(s);
+  } catch {}
+
+  // Find the outermost { ... } block
+  const start = s.indexOf('{');
+  const end   = s.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    try {
+      return JSON.parse(s.slice(start, end + 1));
+    } catch {}
+  }
+
+  // Try to find and collect all complete item objects manually
+  const items: unknown[] = [];
+  const itemRegex = /\{[^{}]*"original"\s*:\s*"[^"]*"[^{}]*"translation"\s*:\s*"[^"]*"[^{}]*\}/g;
+  let match;
+  while ((match = itemRegex.exec(s)) !== null) {
+    try {
+      const item = JSON.parse(match[0]);
+      if (item.original && item.translation) items.push(item);
+    } catch {}
+  }
+  if (items.length > 0) return { items };
+
+  // Last resort — try fixing truncated JSON by closing open brackets
+  try {
+    let fixed = s;
+    // Cut off at the last complete closing brace before any truncation
+    const lastBrace = fixed.lastIndexOf('}');
+    if (lastBrace !== -1) fixed = fixed.slice(0, lastBrace + 1);
+    const opens  = (fixed.match(/\[/g) || []).length - (fixed.match(/\]/g) || []).length;
+    const braces = (fixed.match(/\{/g) || []).length - (fixed.match(/\}/g) || []).length;
+    for (let i = 0; i < braces; i++) fixed += '}';
+    for (let i = 0; i < opens;  i++) fixed += ']';
+    return JSON.parse(fixed);
+  } catch {}
+
+  throw new Error('Could not extract JSON from response');
 }
 
 export async function POST(req: NextRequest) {
@@ -47,15 +83,14 @@ For EACH text region found, return:
 IMPORTANT:
 - Return EVERY text item separately
 - Bounding boxes must be TIGHT — only as wide as the actual text
-- If you see a menu, return EACH dish as a separate entry
 - Keep translations under 60 characters
-- Do NOT skip any text
+- Do NOT include any explanation or text outside the JSON
 
 ${mode === 'quick' ? 'Return only the 5 most prominent items.' : 'Return ALL items. Be thorough.'}
 
 If no Vietnamese text exists return {"items":[]}.
 
-Respond ONLY with valid JSON, no markdown, no explanation:
+You MUST respond with ONLY valid JSON in exactly this format:
 {"items":[{"original":"Phở bò","translation":"Beef Noodle Soup $18","context":"menu item","x":5,"y":20,"w":45,"h":4}]}`;
 
   try {
@@ -91,29 +126,19 @@ Respond ONLY with valid JSON, no markdown, no explanation:
     }
 
     const raw = data.choices?.[0]?.message?.content ?? '';
-    console.log('Groq raw response (first 500 chars):', raw.slice(0, 500));
+    console.log('Groq raw (first 300):', raw.slice(0, 300));
 
-    // Try parse as-is
     try {
-      const clean = raw.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean);
-      console.log('Parsed successfully, items:', parsed?.items?.length ?? 0);
+      const parsed = extractJSON(raw);
+      console.log('Parsed OK, items:', (parsed.items ?? []).length);
       return NextResponse.json(parsed);
-    } catch (e1) {
-      console.warn('Initial parse failed, attempting repair. Error:', e1);
-      // Attempt repair
-      try {
-        const repaired = repairJSON(raw);
-        console.log('Repaired JSON (first 300):', repaired.slice(0, 300));
-        const parsed = JSON.parse(repaired);
-        console.log('Repaired parse OK, items:', parsed?.items?.length ?? 0);
-        return NextResponse.json(parsed);
-      } catch (e2) {
-        console.error('Repair also failed:', e2);
-        console.error('Full raw response:', raw);
-        return NextResponse.json({ items: [], error: 'Could not parse model response' });
-      }
+    } catch (e) {
+      console.error('All parse attempts failed:', e);
+      console.error('Full raw:', raw);
+      // Return empty rather than error so the app shows "No text found" instead of crashing
+      return NextResponse.json({ items: [] });
     }
+
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('Fetch error:', message);
