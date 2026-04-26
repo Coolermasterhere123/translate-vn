@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 interface TranslationItem {
   original: string;
   translation: string;
+  // percentages (0–100) relative to the ORIGINAL image
   x: number;
   y: number;
   w: number;
@@ -18,6 +19,68 @@ function resizeToB64(src: HTMLCanvasElement, maxW: number, quality: number): str
   tmp.width = w; tmp.height = h;
   tmp.getContext('2d')!.drawImage(src, 0, 0, w, h);
   return tmp.toDataURL('image/jpeg', quality).split(',')[1];
+}
+
+// Fit multi-line text INSIDE a box (wrap + shrink-to-fit)
+function drawFittedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number, y: number, w: number, h: number
+) {
+  const padding = Math.max(4, Math.min(10, h * 0.12));
+  const maxW = w - padding * 2;
+  const maxH = h - padding * 2;
+
+  // start big, shrink until it fits
+  let fontSize = Math.min(28, Math.max(12, h * 0.6));
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  const makeLines = (fs: number) => {
+    ctx.font = `bold ${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+    const words = text.split(/\s+/);
+    const lines: string[] = [];
+    let line = '';
+
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      const m = ctx.measureText(test);
+      if (m.width <= maxW) {
+        line = test;
+      } else {
+        if (line) lines.push(line);
+        line = word;
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+
+  let lines = makeLines(fontSize);
+
+  // shrink loop
+  while (fontSize > 10) {
+    lines = makeLines(fontSize);
+    const lineHeight = fontSize * 1.15;
+    const totalH = lines.length * lineHeight;
+    const tooTall = totalH > maxH;
+    const tooWide = lines.some(l => ctx.measureText(l).width > maxW);
+    if (!tooTall && !tooWide) break;
+    fontSize -= 1;
+  }
+
+  // draw centered vertically
+  const lineHeight = fontSize * 1.15;
+  const totalH = lines.length * lineHeight;
+  let cy = y + (h - totalH) / 2;
+
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+
+  for (const line of lines) {
+    ctx.fillText(line, x + w / 2, cy);
+    cy += lineHeight;
+  }
 }
 
 export default function TranslateVN() {
@@ -35,9 +98,7 @@ export default function TranslateVN() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' }
       });
-
       streamRef.current = stream;
-
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -54,40 +115,46 @@ export default function TranslateVN() {
     };
   }, [startCamera]);
 
-  // ── Render overlay
+  // ── Render overlay (KEY: use same "cover" math as drawing image)
   const renderAR = useCallback((items: TranslationItem[]) => {
     const canvas = canvasRef.current;
     const snap = snapshotRef.current;
     if (!canvas || !snap) return;
 
     const ctx = canvas.getContext('2d')!;
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    const vw = canvas.clientWidth || window.innerWidth;
+    const vh = canvas.clientHeight || window.innerHeight;
 
-    ctx.drawImage(snap, 0, 0, canvas.width, canvas.height);
+    canvas.width = vw;
+    canvas.height = vh;
 
+    // "cover" scaling to match your <video object-fit="cover">
+    const scale = Math.max(vw / snap.width, vh / snap.height);
+    const drawW = snap.width * scale;
+    const drawH = snap.height * scale;
+    const offX = (vw - drawW) / 2;
+    const offY = (vh - drawH) / 2;
+
+    // draw snapshot
+    ctx.drawImage(snap, offX, offY, drawW, drawH);
+
+    // draw each translation EXACTLY over its box
     items.forEach(item => {
       const text = (item.translation || '').trim();
-      if (!text || text.length < 2) return; // 🚫 remove empty boxes
+      if (!text) return; // skip empties
 
-      const x = (item.x / 100) * canvas.width;
-      const y = (item.y / 100) * canvas.height;
-      const w = (item.w / 100) * canvas.width;
-      const h = (item.h / 100) * canvas.height;
+      // map percentage box → canvas pixels with SAME scale/offset
+      const x = offX + (item.x / 100) * drawW;
+      const y = offY + (item.y / 100) * drawH;
+      const w = (item.w / 100) * drawW;
+      const h = (item.h / 100) * drawH;
 
-      // Background box
-      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      // background (optional: slight opacity)
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
       ctx.fillRect(x, y, w, h);
 
-      // English text INSIDE box
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 16px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      const centerY = y + h / 2;
-
-      ctx.fillText(text, x + w / 2, centerY);
+      // text fitted INSIDE the box
+      drawFittedText(ctx, text, x, y, w, h);
     });
 
     canvas.style.display = 'block';
@@ -97,43 +164,35 @@ export default function TranslateVN() {
   // ── Translate
   const translate = useCallback(async (b64: string) => {
     setScanning(true);
-
     try {
       const res = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: b64 })
       });
-
       const data = await res.json();
-
       renderAR(data.items ?? []);
-
     } catch (err) {
       console.error(err);
     }
-
     setScanning(false);
   }, [renderAR]);
 
-  // ── Capture (manual only)
+  // ── Capture (manual)
   const capture = useCallback(() => {
     if (!videoRef.current || scanning) return;
 
     const snap = document.createElement('canvas');
     snap.width = videoRef.current.videoWidth || 1280;
     snap.height = videoRef.current.videoHeight || 720;
-
     snap.getContext('2d')!.drawImage(videoRef.current, 0, 0);
 
     snapshotRef.current = snap;
 
-    const b64 = resizeToB64(snap, 1000, 0.75);
+    const b64 = resizeToB64(snap, 1200, 0.85); // keep more detail → better boxes
     translate(b64);
-
   }, [translate, scanning]);
 
-  // ── Dismiss overlay
   const resetView = () => {
     if (canvasRef.current) canvasRef.current.style.display = 'none';
     setArActive(false);
@@ -141,8 +200,6 @@ export default function TranslateVN() {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
-
-      {/* Live camera */}
       <video
         ref={videoRef}
         autoPlay
@@ -151,19 +208,14 @@ export default function TranslateVN() {
         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
       />
 
-      {/* AR overlay */}
       <canvas
         ref={canvasRef}
         style={{ position: 'absolute', inset: 0, display: 'none', cursor: 'pointer' }}
         onClick={resetView}
       />
 
-      {/* Capture button */}
       <div
-        onClick={() => {
-          if (arActive) resetView();
-          else capture();
-        }}
+        onClick={() => (arActive ? resetView() : capture())}
         style={{
           position: 'absolute',
           bottom: 40,
@@ -185,7 +237,6 @@ export default function TranslateVN() {
         {arActive ? '✕' : scanning ? '⏳' : '📷'}
       </div>
 
-      {/* Loading */}
       {scanning && (
         <div style={{
           position: 'absolute',
@@ -200,7 +251,6 @@ export default function TranslateVN() {
           Translating…
         </div>
       )}
-
     </div>
   );
 }
