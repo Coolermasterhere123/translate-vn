@@ -11,6 +11,11 @@ interface TranslationItem {
   h: number;
 }
 
+type TrackedItem = TranslationItem & {
+  id: string;
+  life: number;
+};
+
 function resizeToB64(src: HTMLCanvasElement, maxW: number, quality: number): string {
   let w = src.width, h = src.height;
   if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
@@ -42,14 +47,14 @@ function getFrameHash(canvas: HTMLCanvasElement): string {
 export default function TranslateVN() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const flashRef = useRef<HTMLDivElement>(null);
   const snapshotRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const loopRef = useRef(false);
   const lastHashRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const lastItemsRef = useRef<TranslationItem[]>([]);
+
+  const trackedRef = useRef<TrackedItem[]>([]);
 
   const [scanning, setScanning] = useState(false);
   const scanRef = useRef(false); scanRef.current = scanning;
@@ -58,7 +63,7 @@ export default function TranslateVN() {
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: { facingMode: 'environment' }
       });
 
       streamRef.current = stream;
@@ -72,7 +77,49 @@ export default function TranslateVN() {
     }
   }, []);
 
-  // ── Render AR (smooth)
+  // ── Matching logic
+  function matchItem(a: TranslationItem, b: TranslationItem) {
+    return a.translation === b.translation &&
+      Math.abs(a.x - b.x) < 10 &&
+      Math.abs(a.y - b.y) < 10;
+  }
+
+  // ── Tracking system
+  function updateTrackedItems(newItems: TranslationItem[]) {
+    const tracked = trackedRef.current;
+
+    // decay
+    tracked.forEach(t => t.life--);
+
+    newItems.forEach(item => {
+      const text = (item.translation || '').trim();
+      if (!text || text.length < 2) return;
+
+      const existing = tracked.find(t => matchItem(t, item));
+
+      if (existing) {
+        // smooth + lock
+        existing.x = existing.x * 0.9 + item.x * 0.1;
+        existing.y = existing.y * 0.9 + item.y * 0.1;
+        existing.w = existing.w * 0.9 + item.w * 0.1;
+        existing.h = existing.h * 0.9 + item.h * 0.1;
+
+        existing.translation = text;
+        existing.life = 10;
+      } else {
+        tracked.push({
+          ...item,
+          translation: text,
+          id: Math.random().toString(36),
+          life: 10
+        });
+      }
+    });
+
+    trackedRef.current = tracked.filter(t => t.life > 0);
+  }
+
+  // ── Render
   const renderAR = useCallback((items: TranslationItem[]) => {
     const canvas = canvasRef.current;
     const snap = snapshotRef.current;
@@ -84,17 +131,17 @@ export default function TranslateVN() {
 
     ctx.drawImage(snap, 0, 0, canvas.width, canvas.height);
 
-    items.forEach((item, i) => {
-      const prev = lastItemsRef.current[i];
+    updateTrackedItems(items);
 
-      const smoothX = prev ? prev.x * 0.7 + item.x * 0.3 : item.x;
-      const smoothY = prev ? prev.y * 0.7 + item.y * 0.3 : item.y;
-
-      const x = (smoothX / 100) * canvas.width;
-      const y = (smoothY / 100) * canvas.height;
+    trackedRef.current.forEach(item => {
+      const x = (item.x / 100) * canvas.width;
+      const y = (item.y / 100) * canvas.height;
       const w = (item.w / 100) * canvas.width;
       const h = (item.h / 100) * canvas.height;
 
+      const alpha = Math.min(1, item.life / 10);
+
+      ctx.globalAlpha = alpha;
       ctx.fillStyle = 'rgba(0,0,0,0.75)';
       ctx.fillRect(x, y, w, h);
 
@@ -102,10 +149,12 @@ export default function TranslateVN() {
       ctx.font = 'bold 16px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(item.translation, x + w / 2, y - 4);
+
+      ctx.globalAlpha = 1;
     });
   }, []);
 
-  // ── Translate (with cancel)
+  // ── Translate
   const translate = useCallback(async (b64: string) => {
     if (abortRef.current) abortRef.current.abort();
 
@@ -125,8 +174,7 @@ export default function TranslateVN() {
       const data = await res.json();
 
       if (!controller.signal.aborted) {
-        lastItemsRef.current = data.items ?? [];
-        renderAR(lastItemsRef.current);
+        renderAR(data.items ?? []);
       }
 
     } catch (err: any) {
@@ -138,7 +186,7 @@ export default function TranslateVN() {
     setScanning(false);
   }, [renderAR]);
 
-  // ── Capture (smart)
+  // ── Capture
   const capture = useCallback(async () => {
     if (!videoRef.current || scanRef.current) return;
 
