@@ -96,7 +96,7 @@ export default function TranslateVN() {
       canvas._scale = 1;
       canvas._panX = 0;
       canvas._panY = 0;
-      canvas.style.display = 'none';
+      canvas.style.display = 'none'; // Hide the AR overlay
     }
     snapshotRef.current = null;
     setArActive(false);
@@ -149,15 +149,15 @@ export default function TranslateVN() {
       ctx.stroke();
       ctx.restore();
 
-      // Draw the translation **above** the bounding box
+      // Draw the translation just above the bounding box
       ctx.font = `bold ${Math.max(10, bh * 0.72)}px "Be Vietnam Pro", sans-serif`;
       ctx.fillStyle = (0.299*r + 0.587*g + 0.114*b) > 145 ? '#111' : '#fff';
       ctx.textBaseline = 'bottom';
-      ctx.textAlign = 'left';
-      ctx.fillText(item.translation, bx, by - 4); // position above box
+      ctx.textAlign = 'center';
+      ctx.fillText(item.translation, bx + bw/2, by - 4); // above the box
     });
 
-    // Error or no items message
+    // Show message if no items
     if (errMsg || items.length === 0) {
       const msg = errMsg ?? 'No Vietnamese text found';
       ctx.save();
@@ -180,7 +180,7 @@ export default function TranslateVN() {
     setArActive(true);
   }, []);
 
-  // ── translate API call
+  // ── translate API
   const translate = useCallback(async (b64: string, scanMode: 'full' | 'quick') => {
     setScanning(true);
     try {
@@ -198,7 +198,6 @@ export default function TranslateVN() {
     setScanning(false);
   }, [renderAR]);
 
-  // Capture image
   const capture = useCallback((scanMode: 'full' | 'quick') => {
     if (scanRef.current || !videoRef.current) return;
     if (flashRef.current) {
@@ -213,7 +212,6 @@ export default function TranslateVN() {
     translate(resizeToB64(snap, scanMode === 'quick' ? 800 : 1000, scanMode === 'quick' ? 0.6 : 0.75), scanMode);
   }, [translate]);
 
-  // Auto scan
   const stopAuto = useCallback(() => {
     if (autoRef.current) { clearInterval(autoRef.current); autoRef.current = null; }
     const c = timerCircleRef.current;
@@ -282,7 +280,7 @@ export default function TranslateVN() {
   // =================== JSX Content ===================
   return (
     <div style={{ position:'fixed', inset:0, background:'#000' }}>
-      
+
       {/* Live video */}
       <video
         ref={videoRef}
@@ -363,8 +361,8 @@ export default function TranslateVN() {
       {/* Flash overlay */}
       <div ref={flashRef} style={{ position:'absolute', inset:0, zIndex:25, background:'white', opacity:0, pointerEvents:'none', transition:'opacity .12s' }} />
 
-      {/* Viewfinder corners — removed overlay */}
-      
+      {/* Removed overlay instructions for clarity */}
+
       {/* Top control bar */}
       <div style={{ position:'absolute', top:0, left:0, right:0, zIndex:10, padding:'max(env(safe-area-inset-top),14px) 20px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', background:'linear-gradient(to bottom,rgba(0,0,0,0.75),transparent)' }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
@@ -374,7 +372,7 @@ export default function TranslateVN() {
             <span style={{ fontSize:9, fontWeight:700, letterSpacing:'0.18em', textTransform:'uppercase', color:'#c8922a', marginTop:2 }}>Vietnamese</span>
           </div>
         </div>
-        {/* Mode toggle buttons */}
+        {/* Mode toggle */}
         <div style={{ display:'flex', background:'rgba(0,0,0,0.5)', border:'1px solid rgba(200,146,42,0.22)', borderRadius:20, padding:3, gap:2, backdropFilter:'blur(12px)' }}>
           {(['tap','auto'] as const).map(m => (
             <button key={m} onClick={() => setMode(m)} style={{
@@ -407,7 +405,7 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* Tap hint overlay - removed */}
+      {/* Tap hint overlay - omitted for clarity */}
 
       {/* AR overlay legend */}
       {arActive && (
@@ -423,7 +421,7 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* Bottom control bar */}
+      {/* Bottom controls */}
       <div style={{ position:'absolute', bottom:0, left:0, right:0, zIndex:10, padding:'20px 28px max(env(safe-area-inset-bottom),24px)', display:'flex', alignItems:'center', justifyContent:'center', gap:28, background:'linear-gradient(to top,rgba(0,0,0,0.82),transparent)' }}>
         {/* Gallery upload */}
         <label style={{ width:48, height:48, borderRadius:'50%', border:'1px solid rgba(255,255,255,0.15)', background:'rgba(0,0,0,0.35)', color:'white', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)', flexShrink:0 }}>
@@ -431,7 +429,7 @@ export default function TranslateVN() {
           <input type="file" accept="image/*" style={{ display:'none' }} onChange={e => handleGallery(e.target.files?.[0])} />
         </label>
 
-        {/* Shutter / capture button */}
+        {/* Shutter / capture */}
         <div onClick={onShutter} style={{ width:72, height:72, borderRadius:'50%', border:`2px solid ${scanning?'#e8b84b': '#c8922a'}`, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', backdropFilter:'blur(8px)', boxShadow:scanning?'0 0 30px rgba(232,184,75,0.5)':'0 0 20px rgba(200,146,42,0.3)', transition:'box-shadow .2s,border-color .2s', flexShrink:0 }}>
           <span style={{ fontSize:24 }}>{arActive ? '✕' : scanning ? '⏳' : '📷'}</span>
         </div>
@@ -450,7 +448,7 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* Camera permission/error message */}
+      {/* Camera permission/error */}
       {noCamera && (
         <div style={{ position:'absolute', inset:0, zIndex:5, display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:14, textAlign:'center', padding:40, background:'radial-gradient(ellipse at center,#111,#000)' }}>
           <div style={{ fontSize:52 }}>📷</div>
