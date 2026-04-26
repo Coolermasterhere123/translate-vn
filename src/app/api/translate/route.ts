@@ -1,5 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Attempt to salvage truncated JSON by closing any open structures
+function repairJSON(raw: string): string {
+  let s = raw.replace(/```json|```/g, '').trim();
+
+  // Find the last complete item by cutting at the last complete closing brace
+  const lastGood = s.lastIndexOf('}');
+  if (lastGood !== -1) {
+    s = s.slice(0, lastGood + 1);
+  }
+
+  // Close any open array/object
+  const opens = (s.match(/\[/g) || []).length - (s.match(/\]/g) || []).length;
+  const braces = (s.match(/\{/g) || []).length - (s.match(/\}/g) || []).length;
+
+  for (let i = 0; i < braces; i++) s += '}';
+  for (let i = 0; i < opens; i++) s += ']';
+
+  return s;
+}
+
 export async function POST(req: NextRequest) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -18,36 +38,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'imageBase64 is required' }, { status: 400 });
   }
 
-  const prompt = `You are an expert Vietnamese OCR and translation engine specializing in restaurant menus, street signs, product labels, and all printed Vietnamese text.
+  const prompt = `You are a Vietnamese OCR and translation engine for restaurant menus.
 
-TASK: Carefully examine this image and find EVERY piece of Vietnamese text — including menu item names, prices, descriptions, headings, labels, signs, and any other text.
+Find Vietnamese text in this image and return JSON.
 
-Vietnamese text uses diacritical marks (like ắ, ổ, ề, ươ, đ, etc). Look carefully for these characters.
+Rules:
+- Each menu item = one entry
+- Include price in the translation e.g. "Beef Noodle Soup $18.00"
+- Bounding box should be tight around the text only
+- x,y,w,h are percentages of image dimensions (0-100)
+- Keep translations SHORT (under 60 characters)
 
-For EACH text region found, return:
-- "original": exact Vietnamese text as it appears
-- "translation": accurate English translation
-- "context": what type of text (e.g. "menu item", "price", "section heading", "description", "sign", "label")
-- "x": left edge of bounding box as % of image WIDTH (0-100)
-- "y": top edge of bounding box as % of image HEIGHT (0-100)
-- "w": width of bounding box as % of image WIDTH (1-100)
-- "h": height of bounding box as % of image HEIGHT (1-100)
+${mode === 'quick' ? 'Return max 5 items.' : 'Return all items you can see.'}
 
-IMPORTANT:
-- Return EVERY text item separately — each menu item on its own line gets its own entry
-- Bounding boxes must be TIGHT around just the text — do NOT make boxes span the full page width
-- The box width (w) should only cover the actual text characters, not the whole line
-- Keep box heights small — just tall enough to contain the text line
-- If you see a menu, return EACH dish/item as a separate entry
-- Include the price IN the translation field together with the dish name e.g. "Beef Noodle Soup $18.00"
-- Do NOT skip any text
+Return ONLY this JSON format with no extra text:
+{"items":[{"original":"Phở bò","translation":"Beef Noodle Soup $18","context":"menu item","x":5,"y":20,"w":45,"h":4}]}
 
-${mode === 'quick' ? 'Return only the 5 most prominent text items.' : 'Return ALL text items you can find. Be thorough.'}
-
-If no Vietnamese text exists return {"items":[]}.
-
-Respond ONLY with valid JSON, no markdown, no explanation:
-{"items":[{"original":"Phở bò","translation":"Beef Noodle Soup","context":"menu item","x":10,"y":20,"w":40,"h":5}]}`;
+If no Vietnamese text: {"items":[]}`;
 
   try {
     const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -58,21 +65,16 @@ Respond ONLY with valid JSON, no markdown, no explanation:
       },
       body: JSON.stringify({
         model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        max_tokens: 2000,
+        max_tokens: 4000,
         messages: [
           {
             role: 'user',
             content: [
               {
                 type: 'image_url',
-                image_url: {
-                  url: `data:${imageMime};base64,${imageBase64}`,
-                },
+                image_url: { url: `data:${imageMime};base64,${imageBase64}` },
               },
-              {
-                type: 'text',
-                text: prompt,
-              },
+              { type: 'text', text: prompt },
             ],
           },
         ],
@@ -85,9 +87,22 @@ Respond ONLY with valid JSON, no markdown, no explanation:
       return NextResponse.json({ error: data.error.message }, { status: 502 });
     }
 
-    const raw   = data.choices?.[0]?.message?.content ?? '';
-    const clean = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
+    const raw = data.choices?.[0]?.message?.content ?? '';
+
+    // Try parsing as-is first, then attempt repair
+    let parsed: { items: unknown[] };
+    try {
+      const clean = raw.replace(/```json|```/g, '').trim();
+      parsed = JSON.parse(clean);
+    } catch {
+      try {
+        const repaired = repairJSON(raw);
+        parsed = JSON.parse(repaired);
+      } catch {
+        // Last resort: return empty items rather than crashing
+        parsed = { items: [] };
+      }
+    }
 
     return NextResponse.json(parsed);
   } catch (err: unknown) {
