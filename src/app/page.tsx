@@ -5,35 +5,10 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 interface TranslationItem {
   original: string;
   translation: string;
-  context?: string;
   x: number;
   y: number;
   w: number;
   h: number;
-}
-
-interface ARCanvas extends HTMLCanvasElement {
-  _scale?: number;
-  _panX?: number;
-  _panY?: number;
-}
-
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number, r: number
-) {
-  r = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
 }
 
 function resizeToB64(src: HTMLCanvasElement, maxW: number, quality: number): string {
@@ -45,57 +20,63 @@ function resizeToB64(src: HTMLCanvasElement, maxW: number, quality: number): str
   return tmp.toDataURL('image/jpeg', quality).split(',')[1];
 }
 
+function getFrameHash(canvas: HTMLCanvasElement): string {
+  const small = document.createElement('canvas');
+  small.width = 32;
+  small.height = 32;
+
+  const ctx = small.getContext('2d')!;
+  ctx.drawImage(canvas, 0, 0, 32, 32);
+
+  const data = ctx.getImageData(0, 0, 32, 32).data;
+
+  let hash = 0;
+  for (let i = 0; i < data.length; i += 16) {
+    hash = ((hash << 5) - hash) + data[i];
+    hash |= 0;
+  }
+
+  return hash.toString();
+}
+
 export default function TranslateVN() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const arRef = useRef<ARCanvas>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const flashRef = useRef<HTMLDivElement>(null);
   const snapshotRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const autoRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [mode, setModeState] = useState<'tap' | 'auto'>('tap');
+  const loopRef = useRef(false);
+  const lastHashRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const lastItemsRef = useRef<TranslationItem[]>([]);
+
   const [scanning, setScanning] = useState(false);
-  const [arActive, setArActive] = useState(false);
-  const [noCamera, setNoCamera] = useState(false);
-
   const scanRef = useRef(false); scanRef.current = scanning;
-  const arRef2 = useRef(false); arRef2.current = arActive;
 
   // ── Camera
   const startCamera = useCallback(async () => {
-    setNoCamera(false);
     try {
-      streamRef.current?.getTracks().forEach(t => t.stop());
-
-      const s = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' },
-        audio: false,
       });
 
-      streamRef.current = s;
+      streamRef.current = stream;
 
       if (videoRef.current) {
-        videoRef.current.srcObject = s;
+        videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
-    } catch {
-      setNoCamera(true);
+    } catch (err) {
+      console.error('Camera error:', err);
     }
   }, []);
 
-  useEffect(() => {
-    startCamera();
-    return () => {
-      streamRef.current?.getTracks().forEach(t => t.stop());
-      if (autoRef.current) clearInterval(autoRef.current);
-    };
-  }, [startCamera]);
-
-  // ── AR render
+  // ── Render AR (smooth)
   const renderAR = useCallback((items: TranslationItem[]) => {
+    const canvas = canvasRef.current;
     const snap = snapshotRef.current;
-    const canvas = arRef.current;
-    if (!snap || !canvas) return;
+    if (!canvas || !snap) return;
 
     const ctx = canvas.getContext('2d')!;
     canvas.width = window.innerWidth;
@@ -103,28 +84,34 @@ export default function TranslateVN() {
 
     ctx.drawImage(snap, 0, 0, canvas.width, canvas.height);
 
-    items.forEach(item => {
-      const bx = (item.x / 100) * canvas.width;
-      const by = (item.y / 100) * canvas.height;
-      const bw = (item.w / 100) * canvas.width;
-      const bh = (item.h / 100) * canvas.height;
+    items.forEach((item, i) => {
+      const prev = lastItemsRef.current[i];
 
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      roundRect(ctx, bx, by, bw, bh, 6);
-      ctx.fill();
+      const smoothX = prev ? prev.x * 0.7 + item.x * 0.3 : item.x;
+      const smoothY = prev ? prev.y * 0.7 + item.y * 0.3 : item.y;
+
+      const x = (smoothX / 100) * canvas.width;
+      const y = (smoothY / 100) * canvas.height;
+      const w = (item.w / 100) * canvas.width;
+      const h = (item.h / 100) * canvas.height;
+
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(x, y, w, h);
 
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 16px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(item.translation, bx + bw / 2, by - 4);
+      ctx.fillText(item.translation, x + w / 2, y - 4);
     });
-
-    canvas.style.display = 'block';
-    setArActive(true);
   }, []);
 
-  // ── TRANSLATE (FIXED)
+  // ── Translate (with cancel)
   const translate = useCallback(async (b64: string) => {
+    if (abortRef.current) abortRef.current.abort();
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setScanning(true);
 
     try {
@@ -132,76 +119,84 @@ export default function TranslateVN() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: b64 }),
+        signal: controller.signal
       });
 
       const data = await res.json();
-      console.log('API RESULT:', data);
 
-      renderAR(data.items ?? []);
+      if (!controller.signal.aborted) {
+        lastItemsRef.current = data.items ?? [];
+        renderAR(lastItemsRef.current);
+      }
 
-    } catch (err) {
-      console.error(err);
-      renderAR([]);
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error(err);
+      }
     }
 
     setScanning(false);
   }, [renderAR]);
 
-  // ── CAPTURE (CRITICAL FIX)
-  const capture = useCallback(() => {
+  // ── Capture (smart)
+  const capture = useCallback(async () => {
     if (!videoRef.current || scanRef.current) return;
-
-    if (flashRef.current) {
-      flashRef.current.style.opacity = '0.7';
-      setTimeout(() => {
-        if (flashRef.current) flashRef.current.style.opacity = '0';
-      }, 120);
-    }
 
     const snap = document.createElement('canvas');
     snap.width = videoRef.current.videoWidth || 1280;
     snap.height = videoRef.current.videoHeight || 720;
 
     snap.getContext('2d')!.drawImage(videoRef.current, 0, 0);
+
+    const hash = getFrameHash(snap);
+
+    if (hash === lastHashRef.current) return;
+    lastHashRef.current = hash;
+
     snapshotRef.current = snap;
 
-    // 🔥 THIS WAS MISSING
-    const b64 = resizeToB64(snap, 1000, 0.75);
-    translate(b64);
+    const b64 = resizeToB64(snap, 900, 0.7);
+    await translate(b64);
 
   }, [translate]);
 
-  // ── Auto mode
-  const runAuto = useCallback(() => {
-    if (scanRef.current || arRef2.current) return;
-    capture();
+  // ── Real-time loop
+  const startRealtime = useCallback(() => {
+    if (loopRef.current) return;
+    loopRef.current = true;
+
+    const loop = async () => {
+      if (!loopRef.current) return;
+
+      const start = performance.now();
+
+      if (!scanRef.current) {
+        await capture();
+      }
+
+      const duration = performance.now() - start;
+      const delay = Math.max(800, 1400 - duration);
+
+      setTimeout(loop, delay);
+    };
+
+    loop();
   }, [capture]);
 
-  const startAuto = useCallback(() => {
-    if (autoRef.current) return;
-    runAuto();
-    autoRef.current = setInterval(runAuto, 3500);
-  }, [runAuto]);
+  // ── Lifecycle
+  useEffect(() => {
+    startCamera();
+    startRealtime();
 
-  const stopAuto = useCallback(() => {
-    if (autoRef.current) {
-      clearInterval(autoRef.current);
-      autoRef.current = null;
-    }
-  }, []);
-
-  const onShutter = () => {
-    if (arActive) {
-      if (arRef.current) arRef.current.style.display = 'none';
-      setArActive(false);
-      return;
-    }
-    capture();
-  };
+    return () => {
+      loopRef.current = false;
+      abortRef.current?.abort();
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, [startCamera, startRealtime]);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
-
       <video
         ref={videoRef}
         autoPlay
@@ -211,38 +206,9 @@ export default function TranslateVN() {
       />
 
       <canvas
-        ref={arRef}
-        style={{ position: 'absolute', inset: 0, display: 'none' }}
-        onClick={() => {
-          if (arRef.current) arRef.current.style.display = 'none';
-          setArActive(false);
-        }}
+        ref={canvasRef}
+        style={{ position: 'absolute', inset: 0 }}
       />
-
-      <div
-        ref={flashRef}
-        style={{ position: 'absolute', inset: 0, background: '#fff', opacity: 0 }}
-      />
-
-      <button
-        onClick={onShutter}
-        style={{
-          position: 'absolute',
-          bottom: 40,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          fontSize: 26
-        }}
-      >
-        {arActive ? '✕' : scanning ? '⏳' : '📷'}
-      </button>
-
-      <button
-        onClick={() => mode === 'auto' ? stopAuto() : startAuto()}
-        style={{ position: 'absolute', top: 40, left: 20 }}
-      >
-        {mode === 'auto' ? 'Stop Auto' : 'Auto'}
-      </button>
 
       {scanning && (
         <div style={{
@@ -252,20 +218,7 @@ export default function TranslateVN() {
           transform: 'translate(-50%,-50%)',
           color: '#fff'
         }}>
-          Translating...
-        </div>
-      )}
-
-      {noCamera && (
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#fff'
-        }}>
-          Camera permission needed
+          Translating…
         </div>
       )}
     </div>
