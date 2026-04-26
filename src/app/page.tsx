@@ -21,7 +21,6 @@ function resizeToB64(src: HTMLCanvasElement, maxW: number, quality: number): str
   return tmp.toDataURL('image/jpeg', quality).split(',')[1];
 }
 
-// Draw translation text — single line, auto-shrink font to fit box width
 function drawFittedText(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -30,10 +29,8 @@ function drawFittedText(
   const pad = 4;
   const availW = w - pad * 2;
 
-  // Cap font size — keep it small so it sits neatly on the menu line
   let fontSize = Math.min(10, Math.max(7, h * 0.55));
 
-  // Shrink until single line fits width
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
   while (fontSize > 6) {
@@ -42,7 +39,6 @@ function drawFittedText(
     fontSize -= 0.5;
   }
 
-  // If still too wide, truncate with ellipsis
   let display = text;
   ctx.font = `600 ${fontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
   if (ctx.measureText(display).width > availW) {
@@ -62,22 +58,19 @@ export default function TranslateVN() {
   const flashRef       = useRef<HTMLDivElement>(null);
   const snapshotRef    = useRef<HTMLCanvasElement | null>(null);
   const streamRef      = useRef<MediaStream | null>(null);
-  const autoRef        = useRef<ReturnType<typeof setInterval> | null>(null);
-  const timerCircleRef = useRef<SVGCircleElement | null>(null);
   const zoomRef        = useRef({ scale: 1, panX: 0, panY: 0, lastDist: 0, isPinch: false, sx: 0, sy: 0 });
+  const fileInputRef   = useRef<HTMLInputElement>(null);
 
-  const [mode, setModeState]    = useState<'tap' | 'auto'>('tap');
-  const [scanning, setScanning]  = useState(false);
-  const [arActive, setArActive]  = useState(false);
-  const [noCamera, setNoCamera]  = useState(false);
-  const [showHint, setShowHint]  = useState(true);
-  const [facing, setFacing]      = useState<'environment' | 'user'>('environment');
+  const [scanning, setScanning] = useState(false);
+  const [arActive, setArActive] = useState(false);
+  const [noCamera, setNoCamera] = useState(false);
 
-  const scanRef   = useRef(false); scanRef.current  = scanning;
-  const arRef2    = useRef(false); arRef2.current   = arActive;
-  const facingRef = useRef(facing); facingRef.current = facing;
+  const scanRef = useRef(false); scanRef.current = scanning;
+  const arRef2  = useRef(false); arRef2.current  = arActive;
 
-  // ── Pinch/pan transform ─────────────────────────────────────────────────────
+  const gold = '#c8922a';
+
+  // ── Pinch/pan transform ────────────────────────────────────────────────────
   const applyTransform = useCallback(() => {
     const canvas = arRef.current;
     if (!canvas) return;
@@ -92,13 +85,13 @@ export default function TranslateVN() {
     canvas.style.transformOrigin = 'center center';
   }, []);
 
-  // ── Camera ──────────────────────────────────────────────────────────────────
+  // ── Camera ─────────────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
     setNoCamera(false);
     try {
       streamRef.current?.getTracks().forEach(t => t.stop());
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facingRef.current, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
       streamRef.current = s;
@@ -109,17 +102,7 @@ export default function TranslateVN() {
 
   useEffect(() => {
     startCamera();
-    const t = setTimeout(() => setShowHint(false), 4000);
-    return () => { clearTimeout(t); streamRef.current?.getTracks().forEach(t => t.stop()); };
-  }, [startCamera]);
-
-  const flipCamera = useCallback(() => {
-    setFacing(p => {
-      const next = p === 'environment' ? 'user' : 'environment';
-      facingRef.current = next;
-      setTimeout(() => startCamera(), 0);
-      return next;
-    });
+    return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
   }, [startCamera]);
 
   const resumeCamera = useCallback(() => {
@@ -133,18 +116,19 @@ export default function TranslateVN() {
     setArActive(false);
   }, []);
 
-  // ── AR Renderer ─────────────────────────────────────────────────────────────
+  // ── AR Renderer ────────────────────────────────────────────────────────────
   const renderAR = useCallback((items: TranslationItem[], errMsg: string | null) => {
     const snap   = snapshotRef.current;
     const canvas = arRef.current;
     if (!snap || !canvas) return;
 
-    const vw = canvas.offsetWidth  || window.innerWidth;
-    const vh = canvas.offsetHeight || window.innerHeight;
-    canvas.width = vw; canvas.height = vh;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    canvas.width  = vw;
+    canvas.height = vh;
     const ctx = canvas.getContext('2d')!;
 
-    // Draw snapshot with object-fit:cover math
+    // object-fit:cover math
     const scale = Math.max(vw / snap.width, vh / snap.height);
     const drawW = snap.width  * scale;
     const drawH = snap.height * scale;
@@ -156,41 +140,45 @@ export default function TranslateVN() {
       const full = (item.translation || '').trim();
       if (!full) return;
 
+      // Map % coords to canvas pixels
       const bx = offX + (item.x / 100) * drawW;
       const by = offY + (item.y / 100) * drawH;
       const bw = (item.w / 100) * drawW;
       const bh = (item.h / 100) * drawH;
 
-      // Shrink box height to ~40% of what model returns — just enough for one text line
+      // Clamp box to stay within canvas bounds
+      const cx = Math.max(0, Math.min(bx, vw - 10));
+      const cy = Math.max(0, Math.min(by, vh - 10));
+      const cw = Math.min(bw, vw - cx);
+
+      // Shrink height to just wrap one text line
       const textH = Math.min(bh, Math.max(14, bh * 0.45));
-      // Center the shrunken box vertically within the model's bounding box
-      const textY = by + (bh - textH) / 2;
+      const textY = cy + (bh - textH) / 2;
 
-      // Dark background — tight around text only
+      // Keep box on screen vertically
+      const finalY = Math.max(0, Math.min(textY, vh - textH - 2));
+
       ctx.fillStyle = 'rgba(0,0,0,0.85)';
-      ctx.fillRect(bx, textY, bw, textH);
+      ctx.fillRect(cx, finalY, cw, textH);
 
-      // Gold left border strip
-      ctx.fillStyle = '#c8922a';
-      ctx.fillRect(bx, textY, 2, textH);
+      ctx.fillStyle = gold;
+      ctx.fillRect(cx, finalY, 2, textH);
 
-      // Draw translation text inside the shrunken box
-      drawFittedText(ctx, full, bx + 2, textY, bw - 2, textH);
+      drawFittedText(ctx, full, cx + 2, finalY, cw - 2, textH);
     });
 
     if (errMsg || items.length === 0) {
       const msg = errMsg ?? 'No Vietnamese text found';
       ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
       ctx.beginPath();
-      ctx.roundRect(vw/2-160, vh/2-28, 320, 56, 14);
+      ctx.roundRect(vw / 2 - 160, vh / 2 - 28, 320, 56, 14);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(200,146,42,0.4)'; ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.fillStyle = errMsg ? '#f85149' : 'rgba(255,255,255,0.45)';
-      ctx.font = '500 14px "Be Vietnam Pro", system-ui, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(msg, vw/2, vh/2);
+      ctx.fillStyle = errMsg ? '#f85149' : 'rgba(255,255,255,0.5)';
+      ctx.font = '500 14px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(msg, vw / 2, vh / 2);
       ctx.restore();
     }
 
@@ -200,26 +188,26 @@ export default function TranslateVN() {
     setArActive(true);
   }, []);
 
-  // ── Translate ────────────────────────────────────────────────────────────────
-  const translate = useCallback(async (b64: string, scanMode: 'full' | 'quick') => {
+  // ── Translate ──────────────────────────────────────────────────────────────
+  const translate = useCallback(async (b64: string) => {
     setScanning(true);
     try {
       const res  = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: b64, imageMime: 'image/jpeg', mode: scanMode }),
+        body: JSON.stringify({ imageBase64: b64, imageMime: 'image/jpeg', mode: 'full' }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      if (scanMode === 'full') renderAR(data.items ?? [], null);
+      renderAR(data.items ?? [], null);
     } catch (err) {
-      if (scanMode === 'full') renderAR([], err instanceof Error ? err.message : 'Error');
+      renderAR([], err instanceof Error ? err.message : 'Error');
     }
     setScanning(false);
   }, [renderAR]);
 
-  // ── Capture ──────────────────────────────────────────────────────────────────
-  const capture = useCallback((scanMode: 'full' | 'quick') => {
+  // ── Capture from camera ────────────────────────────────────────────────────
+  const capture = useCallback(() => {
     if (scanRef.current || !videoRef.current) return;
     if (flashRef.current) {
       flashRef.current.style.opacity = '0.7';
@@ -230,65 +218,29 @@ export default function TranslateVN() {
     snap.height = videoRef.current.videoHeight || 720;
     snap.getContext('2d')!.drawImage(videoRef.current, 0, 0, snap.width, snap.height);
     snapshotRef.current = snap;
-    // Higher quality for better OCR
-    translate(resizeToB64(snap, scanMode === 'quick' ? 800 : 1200, scanMode === 'quick' ? 0.6 : 0.85), scanMode);
+    translate(resizeToB64(snap, 1200, 0.85));
   }, [translate]);
 
-  // ── Auto mode ────────────────────────────────────────────────────────────────
-  const stopAuto = useCallback(() => {
-    if (autoRef.current) { clearInterval(autoRef.current); autoRef.current = null; }
-    const c = timerCircleRef.current;
-    if (c) { c.style.transition = 'none'; c.style.strokeDashoffset = '188'; }
-  }, []);
-
-  const runAutoCapture = useCallback(() => {
-    if (scanRef.current || arRef2.current) return;
-    const c = timerCircleRef.current;
-    if (c) {
-      c.style.transition = 'none'; c.style.strokeDashoffset = '188';
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (c) { c.style.transition = 'stroke-dashoffset 3.5s linear'; c.style.strokeDashoffset = '0'; }
-      }));
-    }
-    capture('quick');
-  }, [capture]);
-
-  const startAuto = useCallback(() => {
-    stopAuto(); runAutoCapture();
-    autoRef.current = setInterval(runAutoCapture, 3500);
-  }, [stopAuto, runAutoCapture]);
-
-  const setMode = useCallback((m: 'tap' | 'auto') => {
-    setModeState(m);
-    if (arRef2.current) resumeCamera();
-    if (m === 'auto') startAuto(); else stopAuto();
-  }, [startAuto, stopAuto, resumeCamera]);
-
-  // ── Gallery ──────────────────────────────────────────────────────────────────
+  // ── Gallery upload ─────────────────────────────────────────────────────────
   const handleGallery = useCallback((file?: File | null) => {
     if (!file) return;
-    stopAuto();
     const reader = new FileReader();
     reader.onload = e => {
       const img = new Image();
       img.onload = () => {
         const tmp = document.createElement('canvas');
-        tmp.width = img.width; tmp.height = img.height;
-        tmp.getContext('2d')!.drawImage(img, 0, 0);
+        tmp.width  = img.naturalWidth;
+        tmp.height = img.naturalHeight;
+        tmp.getContext('2d')!.drawImage(img, 0, 0, tmp.width, tmp.height);
         snapshotRef.current = tmp;
-        translate(resizeToB64(tmp, 1200, 0.85), 'full');
+        translate(resizeToB64(tmp, 1200, 0.85));
       };
       img.src = e.target!.result as string;
     };
     reader.readAsDataURL(file);
-  }, [stopAuto, translate]);
+  }, [translate]);
 
-  const onShutter = useCallback(() => {
-    if (arRef2.current) { resumeCamera(); return; }
-    capture('full');
-  }, [capture, resumeCamera]);
-
-  // ── Touch handlers: pinch-zoom + pan ─────────────────────────────────────────
+  // ── Touch: pinch-zoom + pan ────────────────────────────────────────────────
   const handleTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
     if (e.touches.length === 1) {
       zoomRef.current.sx = e.touches[0].clientX;
@@ -308,17 +260,15 @@ export default function TranslateVN() {
       zoomRef.current.isPinch = true;
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
+      const dist  = Math.hypot(dx, dy);
       const delta = dist / zoomRef.current.lastDist;
       zoomRef.current.scale = Math.min(8, Math.max(1, zoomRef.current.scale * delta));
       zoomRef.current.lastDist = dist;
       applyTransform();
     } else if (e.touches.length === 1 && !zoomRef.current.isPinch) {
       if (zoomRef.current.scale <= 1.01) return;
-      const moveX = e.touches[0].clientX - zoomRef.current.sx;
-      const moveY = e.touches[0].clientY - zoomRef.current.sy;
-      zoomRef.current.panX += moveX;
-      zoomRef.current.panY += moveY;
+      zoomRef.current.panX += e.touches[0].clientX - zoomRef.current.sx;
+      zoomRef.current.panY += e.touches[0].clientY - zoomRef.current.sy;
       zoomRef.current.sx = e.touches[0].clientX;
       zoomRef.current.sy = e.touches[0].clientY;
       applyTransform();
@@ -328,30 +278,32 @@ export default function TranslateVN() {
   const handleTouchEnd = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
     if (e.touches.length === 0) {
       if (!zoomRef.current.isPinch && e.changedTouches.length === 1) {
-        const t = e.changedTouches[0];
+        const t  = e.changedTouches[0];
         const dx = Math.abs(t.clientX - zoomRef.current.sx);
         const dy = Math.abs(t.clientY - zoomRef.current.sy);
-        if (dx < 12 && dy < 12 && zoomRef.current.scale <= 1.05) {
-          resumeCamera();
-        }
+        if (dx < 12 && dy < 12 && zoomRef.current.scale <= 1.05) resumeCamera();
       }
       zoomRef.current.isPinch = false;
     }
   }, [resumeCamera]);
 
-  const gold = '#c8922a';
+  const onShutter = useCallback(() => {
+    if (arActive) { resumeCamera(); return; }
+    capture();
+  }, [arActive, capture, resumeCamera]);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
+
       {/* Live video */}
       <video
         ref={videoRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 1 }}
         autoPlay playsInline muted
-        onClick={() => { if (mode === 'tap' && !scanning && !arActive) capture('full'); }}
+        onClick={() => { if (!scanning && !arActive) capture(); }}
       />
 
-      {/* AR canvas — pinch to zoom, drag to pan, tap to dismiss */}
+      {/* AR canvas */}
       <canvas
         ref={arRef}
         style={{
@@ -368,9 +320,33 @@ export default function TranslateVN() {
       {/* Flash */}
       <div ref={flashRef} style={{ position: 'absolute', inset: 0, zIndex: 25, background: 'white', opacity: 0, pointerEvents: 'none', transition: 'opacity .12s' }} />
 
-      {/* Viewfinder corners */}
+      {/* Top bar — always visible */}
+      <div style={{
+        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 30,
+        padding: 'max(env(safe-area-inset-top),14px) 20px 14px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: 'linear-gradient(to bottom,rgba(0,0,0,0.8),transparent)',
+        pointerEvents: 'none',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, pointerEvents: 'auto' }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg,#c8922a,#8b5e10)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🇻🇳</div>
+          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1 }}>
+            <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 15, color: '#fff' }}>Translate</span>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: gold, marginTop: 2 }}>Vietnamese</span>
+          </div>
+        </div>
+
+        {/* AR hint badge */}
+        {arActive && (
+          <div style={{ pointerEvents: 'auto', background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(10px)', border: '1px solid rgba(200,146,42,0.3)', borderRadius: 20, padding: '6px 14px', fontSize: 11, color: 'rgba(255,255,255,0.6)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#e8b84b', fontWeight: 700 }}>EN</span> Pinch to zoom · Tap to dismiss
+          </div>
+        )}
+      </div>
+
+      {/* Viewfinder */}
       {!arActive && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-58%)', width: '70vw', maxWidth: 280, aspectRatio: '1', zIndex: 8, pointerEvents: 'none', opacity: 0.65 }}>
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-58%)', width: '70vw', maxWidth: 280, aspectRatio: '1', zIndex: 8, pointerEvents: 'none', opacity: 0.6 }}>
           {(['tl', 'tr', 'bl', 'br'] as const).map(pos => {
             const map: Record<string, React.CSSProperties> = {
               tl: { top: 0, left: 0, borderWidth: '2px 0 0 2px', borderRadius: '3px 0 0 0' },
@@ -383,80 +359,74 @@ export default function TranslateVN() {
         </div>
       )}
 
-      {/* Top bar */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, padding: 'max(env(safe-area-inset-top),14px) 20px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(to bottom,rgba(0,0,0,0.75),transparent)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg,#c8922a,#8b5e10)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, boxShadow: '0 2px 12px rgba(200,146,42,0.4)' }}>🇻🇳</div>
-          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1 }}>
-            <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 15, color: '#fff' }}>Translate</span>
-            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: gold, marginTop: 2 }}>Vietnamese</span>
-          </div>
-        </div>
-        <div style={{ display: 'flex', background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(200,146,42,0.22)', borderRadius: 20, padding: 3, gap: 2, backdropFilter: 'blur(12px)' }}>
-          {(['tap', 'auto'] as const).map(m => (
-            <button key={m} onClick={() => setMode(m)} style={{
-              padding: '5px 16px', borderRadius: 16, border: 'none',
-              background: mode === m ? 'linear-gradient(135deg,#c8922a,#a87520)' : 'transparent',
-              color: mode === m ? '#000' : 'rgba(255,255,255,0.45)',
-              fontSize: 11, fontWeight: 700, cursor: 'pointer',
-              fontFamily: "'Be Vietnam Pro',sans-serif",
-              letterSpacing: '0.05em', textTransform: 'uppercase', transition: 'all .2s',
-            }}>{m.charAt(0).toUpperCase() + m.slice(1)}</button>
-          ))}
-        </div>
-      </div>
+      {/* Bottom bar — FIXED so it stays visible even when zoomed */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 30,
+        padding: '16px 40px max(env(safe-area-inset-bottom),20px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 36,
+        background: 'linear-gradient(to top,rgba(0,0,0,0.85),transparent)',
+      }}>
 
-      {/* Auto badge */}
-      {mode === 'auto' && (
-        <div style={{ position: 'absolute', top: 78, left: '50%', transform: 'translateX(-50%)', zIndex: 10, background: gold, borderRadius: 20, padding: '5px 14px', fontSize: 10, fontWeight: 700, color: '#000', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-          Auto Scanning
-        </div>
-      )}
-
-      {/* Timer ring */}
-      {mode === 'auto' && !arActive && (
-        <div style={{ position: 'absolute', bottom: 108, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
-          <svg width="48" height="48" viewBox="0 0 64 64" style={{ transform: 'rotate(-90deg)' }}>
-            <circle cx="32" cy="32" r="30" fill="none" stroke="rgba(200,146,42,0.2)" strokeWidth="3" />
-            <circle ref={timerCircleRef} cx="32" cy="32" r="30" fill="none" stroke={gold} strokeWidth="3" strokeLinecap="round"
-              style={{ strokeDasharray: 188, strokeDashoffset: 188 }} />
-          </svg>
-        </div>
-      )}
-
-      {/* Tap hint */}
-      {!arActive && (
-        <div style={{ position: 'absolute', bottom: 115, left: '50%', transform: 'translateX(-50%)', zIndex: 10, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', border: '1px solid rgba(200,146,42,0.22)', borderRadius: 20, padding: '8px 18px', fontSize: 12, color: 'rgba(255,255,255,0.75)', whiteSpace: 'nowrap', opacity: showHint ? 1 : 0, pointerEvents: 'none', transition: 'opacity 1s' }}>
-          📷 Tap anywhere or press the button to translate
-        </div>
-      )}
-
-      {/* AR legend */}
-      {arActive && (
-        <div style={{ position: 'absolute', top: 76, left: '50%', transform: 'translateX(-50%)', zIndex: 10, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(10px)', border: '1px solid rgba(200,146,42,0.22)', borderRadius: 20, padding: '6px 14px', fontSize: 11, color: 'rgba(255,255,255,0.6)', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: '#e8b84b', fontWeight: 700 }}>EN</span> overlaid · Pinch to zoom · Tap to dismiss
-        </div>
-      )}
-
-      {/* Bottom bar */}
-      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10, padding: '20px 28px max(env(safe-area-inset-bottom),24px)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 28, background: 'linear-gradient(to top,rgba(0,0,0,0.82),transparent)' }}>
-        <label style={{ width: 48, height: 48, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.35)', color: 'white', fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)', flexShrink: 0 }}>
+        {/* Gallery button */}
+        <label style={{
+          width: 52, height: 52, borderRadius: '50%',
+          border: '1px solid rgba(255,255,255,0.2)',
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 22, cursor: 'pointer', flexShrink: 0,
+          backdropFilter: 'blur(10px)',
+        }}>
           🖼️
-          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleGallery(e.target.files?.[0])} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={e => {
+              const file = e.target.files?.[0];
+              if (file) handleGallery(file);
+              // Reset so same file can be picked again
+              e.target.value = '';
+            }}
+          />
         </label>
 
-        <div onClick={onShutter} style={{ width: 72, height: 72, borderRadius: '50%', border: `2px solid ${scanning ? '#e8b84b' : gold}`, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backdropFilter: 'blur(8px)', boxShadow: scanning ? '0 0 30px rgba(232,184,75,0.5)' : '0 0 20px rgba(200,146,42,0.3)', transition: 'box-shadow .2s,border-color .2s', flexShrink: 0 }}>
-          <span style={{ fontSize: 24 }}>{arActive ? '✕' : scanning ? '⏳' : '📷'}</span>
+        {/* Shutter / dismiss button */}
+        <div
+          onClick={onShutter}
+          style={{
+            width: 76, height: 76, borderRadius: '50%',
+            border: `2px solid ${scanning ? '#e8b84b' : gold}`,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', flexShrink: 0,
+            backdropFilter: 'blur(8px)',
+            boxShadow: scanning
+              ? '0 0 30px rgba(232,184,75,0.5)'
+              : '0 0 20px rgba(200,146,42,0.3)',
+            transition: 'box-shadow .2s, border-color .2s',
+          }}
+        >
+          <span style={{ fontSize: 26 }}>
+            {arActive ? '✕' : scanning ? '⏳' : '📷'}
+          </span>
         </div>
 
-        <button onClick={flipCamera} style={{ width: 48, height: 48, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.35)', color: 'white', fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)', flexShrink: 0 }}>
-          🔄
-        </button>
+        {/* Spacer to balance layout */}
+        <div style={{ width: 52, height: 52, flexShrink: 0 }} />
       </div>
 
       {/* Scanning badge */}
       {scanning && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 15, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(14px)', border: '1px solid rgba(200,146,42,0.22)', borderRadius: 20, padding: '14px 24px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, fontWeight: 500 }}>
+        <div style={{
+          position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+          zIndex: 35,
+          background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(14px)',
+          border: '1px solid rgba(200,146,42,0.3)',
+          borderRadius: 20, padding: '14px 24px',
+          display: 'flex', alignItems: 'center', gap: 10,
+          fontSize: 13, fontWeight: 500, color: '#fff',
+        }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: gold, display: 'inline-block', animation: 'pulse 1.1s ease infinite' }} />
           Translating…
         </div>
@@ -464,18 +434,30 @@ export default function TranslateVN() {
 
       {/* No camera */}
       {noCamera && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, textAlign: 'center', padding: 40, background: 'radial-gradient(ellipse at center,#111,#000)' }}>
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 5,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', gap: 14, textAlign: 'center', padding: 40,
+          background: 'radial-gradient(ellipse at center,#111,#000)',
+        }}>
           <div style={{ fontSize: 52 }}>📷</div>
           <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)', lineHeight: 1.7 }}>
             Camera access is needed.<br />Please allow permission and try again.
           </p>
-          <button onClick={startCamera} style={{ padding: '13px 28px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg,#c8922a,#8b5e10)', color: '#000', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: "'Be Vietnam Pro',sans-serif", marginTop: 10 }}>
+          <button onClick={startCamera} style={{
+            padding: '13px 28px', borderRadius: 14, border: 'none',
+            background: 'linear-gradient(135deg,#c8922a,#8b5e10)',
+            color: '#000', fontSize: 14, fontWeight: 700,
+            cursor: 'pointer', marginTop: 10,
+          }}>
             Enable Camera
           </button>
         </div>
       )}
 
-      <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.6)}}`}</style>
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.6)} }
+      `}</style>
     </div>
   );
 }
