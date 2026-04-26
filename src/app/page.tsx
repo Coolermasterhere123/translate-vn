@@ -21,68 +21,39 @@ function resizeToB64(src: HTMLCanvasElement, maxW: number, quality: number): str
   return tmp.toDataURL('image/jpeg', quality).split(',')[1];
 }
 
-// Draw translation text — max 2 lines, small font, price inline at end
+// Draw translation text — single line, auto-shrink font to fit box width
 function drawFittedText(
   ctx: CanvasRenderingContext2D,
   text: string,
   x: number, y: number, w: number, h: number
 ) {
-  const pad = Math.max(3, h * 0.08);
+  const pad = 4;
   const availW = w - pad * 2;
 
-  // Start small — menu items should be compact
-  let fontSize = Math.min(11, Math.max(8, h * 0.38));
-  const MAX_LINES = 2;
+  // Cap font size — keep it small so it sits neatly on the menu line
+  let fontSize = Math.min(10, Math.max(7, h * 0.55));
 
-  const getLines = (fs: number): string[] => {
-    ctx.font = `600 ${fs}px "Be Vietnam Pro", system-ui, sans-serif`;
-    const words = text.split(/\s+/);
-    const lines: string[] = [];
-    let line = '';
-    for (const word of words) {
-      const test = line ? line + ' ' + word : word;
-      if (ctx.measureText(test).width <= availW) {
-        line = test;
-      } else {
-        if (line) lines.push(line);
-        line = word;
-        if (lines.length >= MAX_LINES - 1) {
-          // Last allowed line — truncate with ellipsis
-          while (ctx.measureText(line + '…').width > availW && line.length > 1) {
-            line = line.slice(0, -1);
-          }
-          lines.push(line + '…');
-          return lines;
-        }
-      }
-    }
-    if (line && lines.length < MAX_LINES) lines.push(line);
-    return lines;
-  };
-
-  // Shrink font until all lines fit within height
-  let lines = getLines(fontSize);
-  while (fontSize > 7) {
-    lines = getLines(fontSize);
-    const totalH = lines.length * fontSize * 1.2;
-    if (totalH <= h - pad * 2) break;
+  // Shrink until single line fits width
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  while (fontSize > 6) {
+    ctx.font = `600 ${fontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
+    if (ctx.measureText(text).width <= availW) break;
     fontSize -= 0.5;
   }
 
-  const lineH = fontSize * 1.2;
-  const totalTextH = lines.length * lineH;
-  // Vertically center text
-  let cy = y + (h - totalTextH) / 2;
-
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillStyle = '#ffffff';
+  // If still too wide, truncate with ellipsis
+  let display = text;
   ctx.font = `600 ${fontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
+  if (ctx.measureText(display).width > availW) {
+    while (ctx.measureText(display + '…').width > availW && display.length > 1) {
+      display = display.slice(0, -1);
+    }
+    display += '…';
+  }
 
-  lines.forEach(line => {
-    ctx.fillText(line, x + pad, cy, availW);
-    cy += lineH;
-  });
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(display, x + pad, y + h / 2);
 }
 
 export default function TranslateVN() {
@@ -190,35 +161,16 @@ export default function TranslateVN() {
       const bw = (item.w / 100) * drawW;
       const bh = (item.h / 100) * drawH;
 
-      // Split price from text so they sit side by side
-      const priceMatch = full.match(/(\$[\d,.]+|[\d,.]+\s*[$₫€£])/);
-      const price    = priceMatch ? priceMatch[0] : '';
-      const mainText = price ? full.replace(price, '').trim() : full;
-
-      // Measure price width to reserve space on the right
-      const priceFontSize = Math.min(11, Math.max(8, bh * 0.38));
-      ctx.font = `700 ${priceFontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
-      const priceW = price ? ctx.measureText(price).width + 8 : 0;
-
-      // Dark background — only as wide as the text box from the model
-      ctx.fillStyle = 'rgba(0,0,0,0.78)';
+      // Dark semi-transparent background — tight to the text
+      ctx.fillStyle = 'rgba(0,0,0,0.82)';
       ctx.fillRect(bx, by, bw, bh);
 
       // Gold left border strip
       ctx.fillStyle = '#c8922a';
       ctx.fillRect(bx, by, 2, bh);
 
-      // Draw main translation text (leaving room for price on right)
-      drawFittedText(ctx, mainText, bx + 2, by, bw - priceW - 4, bh);
-
-      // Draw price flush right in gold
-      if (price) {
-        ctx.font = `700 ${priceFontSize}px "Be Vietnam Pro", system-ui, sans-serif`;
-        ctx.fillStyle = '#ffd54f';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(price, bx + bw - 4, by + bh / 2);
-      }
+      // Draw translation text — single line, auto-shrink
+      drawFittedText(ctx, full, bx + 2, by, bw - 2, bh);
     });
 
     if (errMsg || items.length === 0) {
